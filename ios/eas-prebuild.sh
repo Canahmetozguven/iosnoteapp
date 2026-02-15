@@ -20,13 +20,13 @@ brew install cmake xcodegen
 # Build llama.cpp
 echo "Building llama.cpp framework..."
 cd ios/llama
-if [ ! -f "build-xcframework.sh" ]; then
-  echo "Error: build-xcframework.sh not found in ios/llama"
+if [ ! -f "scripts/build-ios-xcframework.sh" ]; then
+  echo "Error: scripts/build-ios-xcframework.sh not found in ios/llama"
   ls -la
   exit 1
 fi
-chmod +x build-xcframework.sh
-./build-xcframework.sh
+chmod +x scripts/build-ios-xcframework.sh
+./scripts/build-ios-xcframework.sh
 cd ../..
 
 # Move framework

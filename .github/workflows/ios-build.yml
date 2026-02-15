@@ -31,8 +31,8 @@ jobs:
     - name: Build llama.cpp (AI Engine)
       run: |
         cd ios/llama
-        chmod +x build-xcframework.sh
-        ./build-xcframework.sh
+        chmod +x scripts/build-ios-xcframework.sh
+        ./scripts/build-ios-xcframework.sh
         ls -R build-apple/llama.xcframework
 
     - name: Move Llama Framework
