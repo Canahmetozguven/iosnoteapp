@@ -10,7 +10,7 @@ on:
 jobs:
   build:
     name: Build iOS App
-    runs-on: macos-14 # Uses M1 Mac runners (free tier)
+    runs-on: macos-15
     
     steps:
     - name: Checkout repository
@@ -18,15 +18,48 @@ jobs:
       with:
         submodules: recursive
 
+    - name: Select Xcode
+      uses: maxim-lobanov/setup-xcode@v1
+      with:
+        xcode-version: latest-stable
+
     - name: Install Dependencies
       run: |
         brew install cmake xcodegen
+        xcodebuild -version
+        xcodebuild -showsdks || true
 
     - name: Validate iOS Build Configuration
       run: |
         grep -q '"scheme": "SynapsNotes-iOS"' eas.json
         grep -q '^name: SynapsNotes-iOS' ios/project.yml
         grep -q 'PRODUCT_BUNDLE_IDENTIFIER: com.synapsnotes.ios' ios/project.yml
+
+    - name: Generate AppIcon assets
+      run: |
+        set -euo pipefail
+        ICON_SRC="ios/Resources/AppIcon-1024.png"
+        if [ ! -f "$ICON_SRC" ]; then
+          echo "Missing $ICON_SRC"
+          exit 1
+        fi
+        ICON_DIR="ios/Resources/Assets.xcassets/AppIcon.appiconset"
+        mkdir -p "$ICON_DIR"
+        sips -z 120 120 "$ICON_SRC" --out "$ICON_DIR/Icon-60@2x.png" >/dev/null
+        sips -z 180 180 "$ICON_SRC" --out "$ICON_DIR/Icon-60@3x.png" >/dev/null
+        sips -z 152 152 "$ICON_SRC" --out "$ICON_DIR/Icon-76@2x.png" >/dev/null
+        cp "$ICON_SRC" "$ICON_DIR/Icon-1024.png"
+        cat > "$ICON_DIR/Contents.json" <<'JSON'
+        {
+          "images": [
+            { "idiom": "iphone", "size": "60x60", "scale": "2x", "filename": "Icon-60@2x.png" },
+            { "idiom": "iphone", "size": "60x60", "scale": "3x", "filename": "Icon-60@3x.png" },
+            { "idiom": "ipad", "size": "76x76", "scale": "2x", "filename": "Icon-76@2x.png" },
+            { "idiom": "ios-marketing", "size": "1024x1024", "scale": "1x", "filename": "Icon-1024.png" }
+          ],
+          "info": { "author": "xcode", "version": 1 }
+        }
+        JSON
         
     - name: Build llama.cpp (AI Engine)
       run: |
