@@ -90,7 +90,7 @@ if grep -n "GENERATE_INFOPLIST_FILE=" fastlane/Fastfile; then
 fi
 
 # Prevent committing large .gguf model weights. Allow llama.cpp vocab ggufs.
-disallowed_gguf="$(git ls-files '*.gguf' | grep -vE '^ios/llama/models/ggml-vocab-.*\\.gguf$' || true)"
+disallowed_gguf="$(git ls-files '*.gguf' | grep -vE '^ios/llama/models/ggml-vocab-.*\.gguf$' || true)"
 if [ -n "$disallowed_gguf" ]; then
   echo "Disallowed tracked .gguf files (models must not be committed):"
   echo "$disallowed_gguf"
