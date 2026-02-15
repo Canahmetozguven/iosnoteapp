@@ -1,0 +1,23 @@
+name: iOS Preflight
+
+on:
+  workflow_dispatch:
+
+jobs:
+  preflight:
+    name: Fast Checks
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Show revision
+        run: |
+          echo "GITHUB_SHA=$GITHUB_SHA"
+          git log -1 --oneline
+
+      - name: Run iOS preflight checks
+        run: |
+          bash scripts/ci/ios_preflight.sh
+

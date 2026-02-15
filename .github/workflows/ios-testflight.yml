@@ -11,9 +11,47 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  preflight:
+    name: Fast Checks
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Show revision
+        run: |
+          echo "GITHUB_SHA=$GITHUB_SHA"
+          git log -1 --oneline
+
+      - name: Validate required secrets
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_CONTENT_BASE64: ${{ secrets.ASC_KEY_CONTENT_BASE64 }}
+          IOS_DIST_P12_BASE64: ${{ secrets.IOS_DIST_P12_BASE64 }}
+          IOS_DIST_P12_PASSWORD: ${{ secrets.IOS_DIST_P12_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          missing=0
+          for var in ASC_KEY_ID ASC_ISSUER_ID ASC_KEY_CONTENT_BASE64 IOS_DIST_P12_BASE64 IOS_DIST_P12_PASSWORD APPLE_TEAM_ID; do
+            if [ -z "${!var}" ]; then
+              echo "Missing GitHub secret: $var"
+              missing=1
+            fi
+          done
+          if [ "$missing" -ne 0 ]; then
+            exit 1
+          fi
+
+      - name: Run iOS preflight checks
+        run: |
+          bash scripts/ci/ios_preflight.sh
+
   release:
     name: Build and Upload TestFlight
     runs-on: macos-15
+    needs: preflight
     timeout-minutes: 90
     env:
       FASTLANE_SKIP_UPDATE_CHECK: "1"
