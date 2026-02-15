@@ -21,7 +21,7 @@ platform :ios do
       export_method: "app-store",
       skip_profile_detection: true,
       codesigning_identity: "Apple Distribution",
-      xcargs: "DEVELOPMENT_TEAM=#{ENV.fetch("APPLE_TEAM_ID")} CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY=\"Apple Distribution\" PROVISIONING_PROFILE_SPECIFIER=\"#{ENV.fetch("PROFILE_NAME")}\" MARKETING_VERSION=#{marketing_version} CURRENT_PROJECT_VERSION=#{build_number} INFOPLIST_KEY_CFBundleShortVersionString=#{marketing_version} INFOPLIST_KEY_CFBundleVersion=#{build_number}",
+      xcargs: "DEVELOPMENT_TEAM=#{ENV.fetch("APPLE_TEAM_ID")} CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY=\"Apple Distribution\" PROVISIONING_PROFILE_SPECIFIER=\"#{ENV.fetch("PROFILE_NAME")}\" MARKETING_VERSION=#{marketing_version} CURRENT_PROJECT_VERSION=#{build_number} INFOPLIST_FILE=Resources/Info.plist GENERATE_INFOPLIST_FILE=NO ASSETCATALOG_COMPILER_APPICON_NAME=AppIcon",
       output_directory: "build",
       output_name: "SynapsNotes-iOS.ipa",
       export_options: {

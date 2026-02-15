@@ -42,9 +42,8 @@ targets:
       - framework: Frameworks/llama.xcframework
         embed: true
     resources:
-      - path: Resources
-        type: group
-        createIntermediateGroups: true
+      - path: Resources/Assets.xcassets
+      - path: Resources/LaunchScreen.storyboard
     settings:
       base:
         PRODUCT_NAME: SynapsNotes-iOS
