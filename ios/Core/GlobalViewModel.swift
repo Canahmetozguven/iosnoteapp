@@ -226,10 +226,12 @@ class GlobalViewModel {
                     self.indexingStatus = "Indexed \(indexedNow)/\(total) notes..."
                 }
             }
-             
+            
+            let indexedFinal = indexed
+            let failedFinal = failed
             await MainActor.run {
                 self.isBusy = false
-                self.indexingStatus = "Completed: \(indexed) indexed, \(failed) failed"
+                self.indexingStatus = "Completed: \(indexedFinal) indexed, \(failedFinal) failed"
                 
                 // Clear status after delay
                 Task {

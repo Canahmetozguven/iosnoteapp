@@ -233,7 +233,6 @@ actor LlamaContext {
                     var n_cur = Int32(n_tokens)
                     var n_decode = 0
                     let max_tokens = 2048
-                    let n_ctx = Int32(llama_n_ctx(context))
                     
                     // Stop sequences (matching Android)
                     let stopSequences = [
