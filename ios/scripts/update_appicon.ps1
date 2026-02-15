@@ -33,14 +33,16 @@ function Ensure-1024SquarePng([string]$inPath, [string]$outPath) {
     $x = [int](($img.Width - $side) / 2)
     $y = [int](($img.Height - $side) / 2)
 
-    $bmp = New-Object System.Drawing.Bitmap 1024, 1024
+    # App Store icon must not contain an alpha channel. Use 24bpp RGB and paint an opaque background.
+    $bmp = New-Object System.Drawing.Bitmap 1024, 1024, ([System.Drawing.Imaging.PixelFormat]::Format24bppRgb)
     $g = [System.Drawing.Graphics]::FromImage($bmp)
     try {
       $g.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
       $g.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::HighQuality
       $g.PixelOffsetMode = [System.Drawing.Drawing2D.PixelOffsetMode]::HighQuality
       $g.CompositingQuality = [System.Drawing.Drawing2D.CompositingQuality]::HighQuality
-      $g.Clear([System.Drawing.Color]::Transparent)
+      # White background is acceptable and avoids transparency.
+      $g.Clear([System.Drawing.Color]::White)
 
       $srcRect = New-Object System.Drawing.Rectangle $x, $y, $side, $side
       $dstRect = New-Object System.Drawing.Rectangle 0, 0, 1024, 1024
@@ -87,4 +89,3 @@ if ($CommitAndPush) {
   git commit -m $CommitMessage
   git push
 }
-

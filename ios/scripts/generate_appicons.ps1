@@ -12,14 +12,15 @@ New-Item -ItemType Directory -Force -Path $dstDir | Out-Null
 function Resize-Png([string]$inPath, [string]$outPath, [int]$w, [int]$h) {
   $img = [System.Drawing.Image]::FromFile($inPath)
   try {
-    $bmp = New-Object System.Drawing.Bitmap $w, $h
+    # App icons must not contain transparency. Use 24bpp RGB and paint an opaque background.
+    $bmp = New-Object System.Drawing.Bitmap $w, $h, ([System.Drawing.Imaging.PixelFormat]::Format24bppRgb)
     $g = [System.Drawing.Graphics]::FromImage($bmp)
     try {
       $g.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
       $g.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::HighQuality
       $g.PixelOffsetMode = [System.Drawing.Drawing2D.PixelOffsetMode]::HighQuality
       $g.CompositingQuality = [System.Drawing.Drawing2D.CompositingQuality]::HighQuality
-      $g.Clear([System.Drawing.Color]::Transparent)
+      $g.Clear([System.Drawing.Color]::White)
       $g.DrawImage($img, 0, 0, $w, $h)
     }
     finally {
