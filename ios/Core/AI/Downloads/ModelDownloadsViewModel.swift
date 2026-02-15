@@ -1,6 +1,5 @@
 import Foundation
 
-@MainActor
 @Observable
 final class ModelDownloadsViewModel {
     var states: [String: DownloadState] = [:] // modelId -> state
@@ -17,4 +16,3 @@ final class ModelDownloadsViewModel {
         states.removeValue(forKey: modelId)
     }
 }
-

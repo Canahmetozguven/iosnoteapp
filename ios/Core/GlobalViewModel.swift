@@ -2,6 +2,7 @@ import Foundation
 import SwiftUI
 import SwiftData
 
+@MainActor
 @Observable
 class GlobalViewModel {
     let catalogStore = ModelCatalogStore()
