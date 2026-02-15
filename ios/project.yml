@@ -46,15 +46,17 @@ targets:
         type: group
         createIntermediateGroups: true
     settings:
-      PRODUCT_NAME: SynapsNotes-iOS
-      PRODUCT_BUNDLE_IDENTIFIER: com.synapsnotes.ios
-      SWIFT_VERSION: 5.10
-      SUPPORTED_PLATFORMS: iphoneos iphonesimulator
-      INFOPLIST_FILE: Resources/Info.plist
-      GENERATE_INFOPLIST_FILE: NO
-      MARKETING_VERSION: 1.0.0
-      CURRENT_PROJECT_VERSION: 1
-      ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+      base:
+        PRODUCT_NAME: SynapsNotes-iOS
+        PRODUCT_BUNDLE_IDENTIFIER: com.synapsnotes.ios
+        SWIFT_VERSION: 5.10
+        SUPPORTED_PLATFORMS: iphoneos iphonesimulator
+        INFOPLIST_FILE: Resources/Info.plist
+        GENERATE_INFOPLIST_FILE: NO
+        MARKETING_VERSION: 1.0.0
+        CURRENT_PROJECT_VERSION: 1
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS: YES
 
   SynapsNotesTests:
     type: bundle.unit-test
@@ -67,6 +69,7 @@ targets:
     dependencies:
       - target: SynapsNotes
     settings:
-      PRODUCT_NAME: SynapsNotesTests
-      SWIFT_VERSION: 5.10
-      SUPPORTED_PLATFORMS: iphoneos iphonesimulator
+      base:
+        PRODUCT_NAME: SynapsNotesTests
+        SWIFT_VERSION: 5.10
+        SUPPORTED_PLATFORMS: iphoneos iphonesimulator
