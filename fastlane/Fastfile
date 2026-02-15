@@ -17,12 +17,14 @@ platform :ios do
       clean: true,
       export_method: "app-store",
       skip_profile_detection: true,
-      xcargs: "DEVELOPMENT_TEAM=#{ENV.fetch("APPLE_TEAM_ID")} CODE_SIGN_STYLE=Manual PROVISIONING_PROFILE_SPECIFIER=\"#{ENV.fetch("PROFILE_NAME")}\"",
+      codesigning_identity: "Apple Distribution",
+      xcargs: "DEVELOPMENT_TEAM=#{ENV.fetch("APPLE_TEAM_ID")} CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY=\"Apple Distribution\" PROVISIONING_PROFILE_SPECIFIER=\"#{ENV.fetch("PROFILE_NAME")}\"",
       output_directory: "build",
       output_name: "SynapsNotes-iOS.ipa",
       export_options: {
         method: "app-store",
         signingStyle: "manual",
+        signingCertificate: "Apple Distribution",
         teamID: ENV.fetch("APPLE_TEAM_ID"),
         provisioningProfiles: {
           ENV.fetch("APP_IDENTIFIER") => ENV.fetch("PROFILE_NAME")

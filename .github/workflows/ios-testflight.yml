@@ -87,6 +87,10 @@ jobs:
           p12-file-base64: ${{ secrets.IOS_DIST_P12_BASE64 }}
           p12-password: ${{ secrets.IOS_DIST_P12_PASSWORD }}
 
+      - name: Validate signing identities (cred check)
+        run: |
+          security find-identity -v -p codesigning || true
+
       - name: Decode App Store Connect private key
         id: decode_key
         env:
