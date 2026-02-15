@@ -118,13 +118,14 @@ class GlobalViewModel {
                 do {
                     let queryEmbedding = try await llamaContext.embed(text: text)
                     if !queryEmbedding.isEmpty {
-                        ragContext = vectorSearchService.findSimilarNotes(
+                        let foundContext = vectorSearchService.findSimilarNotes(
                             queryEmbedding: queryEmbedding,
                             notes: notes,
                             topK: 3
                         )
+                        ragContext = foundContext
                         await MainActor.run {
-                            self.retrievedContext = ragContext
+                            self.retrievedContext = foundContext
                         }
                     }
                 } catch {
@@ -153,10 +154,11 @@ class GlobalViewModel {
                     if Task.isCancelled { break }
                     
                     fullResponse += token
-                    
+                    let responseSnapshot = fullResponse
+                     
                     // Parse and update the message on main thread
                     await MainActor.run {
-                        let parsed = parseThinkTags(fullResponse)
+                        let parsed = parseThinkTags(responseSnapshot)
                         assistantMessage.content = parsed.content
                         assistantMessage.thoughtProcess = parsed.thought
                     }
@@ -217,12 +219,14 @@ class GlobalViewModel {
                 }
                 
                 // Update progress
+                let indexedNow = indexed
+                let failedNow = failed
                 await MainActor.run {
-                    self.indexingProgress = Double(indexed + failed) / Double(total)
-                    self.indexingStatus = "Indexed \(indexed)/\(total) notes..."
+                    self.indexingProgress = Double(indexedNow + failedNow) / Double(total)
+                    self.indexingStatus = "Indexed \(indexedNow)/\(total) notes..."
                 }
             }
-            
+             
             await MainActor.run {
                 self.isBusy = false
                 self.indexingStatus = "Completed: \(indexed) indexed, \(failed) failed"

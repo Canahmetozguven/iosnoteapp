@@ -187,7 +187,9 @@ actor LlamaContext {
                     // Clear KV cache for new chat
                     // In a real chat app with history, we might want to be smarter about this (KV cache reuse),
                     // but for now, matching the Android "stateless" prompt approach per request or full history re-eval.
-                    llama_kv_cache_clear(context)
+                    if let mem = llama_get_memory(context) {
+                        llama_memory_clear(mem, true)
+                    }
                     
                     let n_ctx = Int32(llama_n_ctx(context))
                     let maxPromptTokens = max(1, Int(n_ctx - 1))
@@ -319,7 +321,9 @@ actor LlamaContext {
         if n_tokens == 0 { return [] }
         
         // Clear KV for clean embedding
-        llama_kv_cache_clear(context)
+        if let mem = llama_get_memory(context) {
+            llama_memory_clear(mem, true)
+        }
         
         let chunkSize = max(1, min(Int(llama_n_batch(context)), 1024))
         resetBatch(capacity: Int32(chunkSize))
@@ -344,7 +348,7 @@ actor LlamaContext {
             throw LlamaError.noEmbeddings
         }
         
-        let n_embd = Int(llama_n_embd(model))
+        let n_embd = Int(llama_model_n_embd(model))
         let buffer = UnsafeBufferPointer(start: embeddingPtr, count: n_embd)
         var embeddings = Array(buffer)
         
