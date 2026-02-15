@@ -23,6 +23,14 @@
 
   <key>CFBundleIconName</key>
   <string>AppIcon</string>
+  <key>CFBundleIcons</key>
+  <dict>
+    <key>CFBundlePrimaryIcon</key>
+    <dict>
+      <key>CFBundleIconName</key>
+      <string>AppIcon</string>
+    </dict>
+  </dict>
 
   <key>ITSAppUsesNonExemptEncryption</key>
   <false/>
@@ -51,4 +59,3 @@
   <true/>
 </dict>
 </plist>
-

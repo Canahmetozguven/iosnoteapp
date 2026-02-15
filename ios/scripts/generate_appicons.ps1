@@ -35,6 +35,14 @@ function Resize-Png([string]$inPath, [string]$outPath, [int]$w, [int]$h) {
 }
 
 $icons = @(
+  # iPad notifications/settings/spotlight sizes
+  @{ name="Icon-ipad-20@1x.png"; w=20; h=20 },
+  @{ name="Icon-ipad-20@2x.png"; w=40; h=40 },
+  @{ name="Icon-ipad-29@1x.png"; w=29; h=29 },
+  @{ name="Icon-ipad-29@2x.png"; w=58; h=58 },
+  @{ name="Icon-ipad-40@1x.png"; w=40; h=40 },
+  @{ name="Icon-ipad-40@2x.png"; w=80; h=80 },
+  @{ name="Icon-ipad-76@1x.png"; w=76; h=76 },
   @{ name="Icon-20@2x.png"; w=40; h=40 },
   @{ name="Icon-20@3x.png"; w=60; h=60 },
   @{ name="Icon-29@2x.png"; w=58; h=58 },
@@ -68,6 +76,13 @@ $contentsJson = @"
     { "idiom": "iphone", "size": "60x60", "scale": "2x", "filename": "Icon-60@2x.png" },
     { "idiom": "iphone", "size": "60x60", "scale": "3x", "filename": "Icon-60@3x.png" },
 
+    { "idiom": "ipad", "size": "20x20", "scale": "1x", "filename": "Icon-ipad-20@1x.png" },
+    { "idiom": "ipad", "size": "20x20", "scale": "2x", "filename": "Icon-ipad-20@2x.png" },
+    { "idiom": "ipad", "size": "29x29", "scale": "1x", "filename": "Icon-ipad-29@1x.png" },
+    { "idiom": "ipad", "size": "29x29", "scale": "2x", "filename": "Icon-ipad-29@2x.png" },
+    { "idiom": "ipad", "size": "40x40", "scale": "1x", "filename": "Icon-ipad-40@1x.png" },
+    { "idiom": "ipad", "size": "40x40", "scale": "2x", "filename": "Icon-ipad-40@2x.png" },
+    { "idiom": "ipad", "size": "76x76", "scale": "1x", "filename": "Icon-ipad-76@1x.png" },
     { "idiom": "ipad", "size": "76x76", "scale": "2x", "filename": "Icon-76@2x.png" },
     { "idiom": "ipad", "size": "83.5x83.5", "scale": "2x", "filename": "Icon-83.5@2x.png" },
 
@@ -80,4 +95,3 @@ $contentsJson = @"
 Set-Content -Encoding utf8 -NoNewline -Path (Join-Path $dstDir "Contents.json") -Value $contentsJson
 
 Write-Output ("Generated {0} icon files in {1}" -f $icons.Count, $dstDir)
-
