@@ -38,12 +38,16 @@ targets:
       - path: UI
         type: group
         createIntermediateGroups: true
+      # Force these into the app's resources build phase (Assets.car + LaunchScreen.storyboardc).
+      - path: Resources/Assets.xcassets
+        type: group
+        buildPhase: resources
+      - path: Resources/LaunchScreen.storyboard
+        type: group
+        buildPhase: resources
     dependencies:
       - framework: Frameworks/llama.xcframework
         embed: true
-    resources:
-      - path: Resources/Assets.xcassets
-      - path: Resources/LaunchScreen.storyboard
     settings:
       base:
         PRODUCT_NAME: SynapsNotes-iOS
