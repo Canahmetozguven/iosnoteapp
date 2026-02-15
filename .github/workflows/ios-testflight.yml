@@ -75,6 +75,8 @@ jobs:
           test -f ios/Resources/Assets.xcassets/AppIcon.appiconset/Icon-60@2x.png
           test -f ios/Resources/Assets.xcassets/AppIcon.appiconset/Icon-76@2x.png
           test -f ios/Resources/Assets.xcassets/AppIcon.appiconset/Icon-1024.png
+          test -f ios/Resources/Assets.xcassets/AppIcon.appiconset/Icon-ipad-76@1x.png
+          ls -la ios/Resources/Assets.xcassets/AppIcon.appiconset
           echo "Resources present."
 
       - name: Build llama.cpp XCFramework
@@ -94,12 +96,6 @@ jobs:
         run: |
           cd ios
           xcodegen
-          PBXPROJ="SynapsNotes-iOS.xcodeproj/project.pbxproj"
-          # Keep generated project compatible with Xcode 15.4 on CI images.
-          sed -i '' 's/objectVersion = 77;/objectVersion = 60;/g' "$PBXPROJ"
-          sed -i '' '/minimizedProjectReferenceProxies = 1;/d' "$PBXPROJ"
-          sed -i '' '/preferredProjectObjectVersion = 56;/d' "$PBXPROJ"
-          grep -n "objectVersion" "$PBXPROJ" | head -1
           xcodebuild -list -project SynapsNotes-iOS.xcodeproj
 
       - name: Import distribution certificate
