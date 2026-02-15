@@ -152,7 +152,7 @@ jobs:
           echo "profile_name=$PROFILE_NAME" >> "$GITHUB_OUTPUT"
           echo "Using provisioning profile: $PROFILE_NAME"
 
-      - name: Build and upload to TestFlight
+      - name: Build IPA (fastlane)
         env:
           ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
           ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
@@ -163,7 +163,7 @@ jobs:
           MARKETING_VERSION: 1.0.0
           BUILD_NUMBER: ${{ github.run_number }}
         run: |
-          bundle exec fastlane ios github_testflight
+          bundle exec fastlane ios github_build
 
       - name: Inspect IPA contents (must include icons + launch screen)
         if: always()
@@ -186,6 +186,15 @@ jobs:
           echo "---- Look for Assets.car / LaunchScreen ----"
           find "$APP_PATH" -maxdepth 2 -name "Assets.car" -o -name "LaunchScreen.storyboardc" -o -name "*.png" | head -50 || true
           test -f "$APP_PATH/Assets.car"
+
+      - name: Upload to TestFlight (fastlane)
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_CONTENT: ${{ secrets.ASC_KEY_CONTENT_BASE64 }}
+          APP_IDENTIFIER: com.synapsnotes.ios
+        run: |
+          bundle exec fastlane ios github_upload
 
       - name: Upload IPA artifact
         uses: actions/upload-artifact@v4
