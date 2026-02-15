@@ -1,0 +1,24 @@
+node_modules/
+.expo/
+dist/
+web-build/
+
+# Local tooling / scratch
+.sisyphus/
+undefined/
+
+# iOS
+ios/build/
+ios/Pods/
+ios/*.xcworkspace
+ios/*.xcodeproj
+ios/Frameworks/llama.xcframework
+.DS_Store
+
+# Signing / credentials (never commit)
+credentials.json
+credentials/
+*.p12
+*.p8
+*.mobileprovision
+*_base64.txt

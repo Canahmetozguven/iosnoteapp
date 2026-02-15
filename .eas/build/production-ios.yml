@@ -1,0 +1,48 @@
+build:
+  name: Production iOS Build
+  steps:
+    - eas/checkout
+    - run:
+        name: Install Build Dependencies
+        command: |
+          brew install cmake xcodegen
+    - run:
+        name: Build llama.cpp XCFramework
+        command: |
+          cd ios/llama
+          chmod +x build-xcframework.sh
+          ./build-xcframework.sh
+          ls -R build-apple/llama.xcframework
+    - run:
+        name: Move llama XCFramework
+        command: |
+          mkdir -p ios/Frameworks
+          rm -rf ios/Frameworks/llama.xcframework
+          cp -R ios/llama/build-apple/llama.xcframework ios/Frameworks/
+    - run:
+        name: Generate Xcode Project
+        command: |
+           cd ios
+           xcodebuild -version
+           xcodegen
+           PROJECT_FILE="SynapsNotes-iOS.xcodeproj/project.pbxproj"
+           grep -n "objectVersion" "$PROJECT_FILE" || true
+           grep -n "preferredProjectObjectVersion" "$PROJECT_FILE" || true
+           grep -n "minimizedProjectReferenceProxies" "$PROJECT_FILE" || true
+           perl -0777 -i -pe 's/objectVersion = \d+;/objectVersion = 56;/g; s/\n\s*preferredProjectObjectVersion = \d+;//g; s/\n\s*minimizedProjectReferenceProxies = \d+;//g; s/compatibilityVersion = \"Xcode [^\"]+\";/compatibilityVersion = \"Xcode 15.0\";/g' "$PROJECT_FILE"
+           grep -n "objectVersion" "$PROJECT_FILE"
+           grep -n "preferredProjectObjectVersion" "$PROJECT_FILE" || true
+           grep -n "minimizedProjectReferenceProxies" "$PROJECT_FILE" || true
+           ruby -e 'require "xcodeproj"; p = Xcodeproj::Project.open("SynapsNotes-iOS.xcodeproj"); p.save'
+           xcodebuild -list -project SynapsNotes-iOS.xcodeproj
+    - eas/resolve_build_config
+    - eas/configure_ios_credentials:
+        inputs:
+          credentials: ${ eas.job.secrets.buildCredentials }
+    - eas/generate_gymfile_from_template:
+        inputs:
+          credentials: ${ eas.job.secrets.buildCredentials }
+          scheme: SynapsNotes-iOS
+          build_configuration: Release
+    - eas/run_fastlane
+    - eas/find_and_upload_build_artifacts

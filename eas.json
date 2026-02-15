@@ -1,0 +1,38 @@
+{
+  "cli": {
+    "version": ">= 16.28.0",
+    "appVersionSource": "remote"
+  },
+  "build": {
+    "development": {
+      "developmentClient": false,
+      "distribution": "internal",
+      "ios": {
+        "scheme": "SynapsNotes-iOS",
+        "buildConfiguration": "Release"
+      }
+    },
+    "preview": {
+      "distribution": "internal",
+      "ios": {
+        "scheme": "SynapsNotes-iOS",
+        "buildConfiguration": "Release",
+        "simulator": true
+      }
+    },
+    "production": {
+      "autoIncrement": true,
+      "distribution": "store",
+      "config": "production-ios.yml",
+      "ios": {
+        "scheme": "SynapsNotes-iOS",
+        "buildConfiguration": "Release"
+      }
+    }
+  },
+  "submit": {
+    "production": {
+      "ios": {}
+    }
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "expo": {
+    "name": "Synaps Notes",
+    "slug": "synaps-notes-ios",
+    "version": "1.0.0",
+    "ios": {
+      "bundleIdentifier": "com.synapsnotes.ios",
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false
+      }
+    },
+    "extra": {
+      "eas": {
+        "projectId": "c6673383-52c2-46d1-9953-e9497890e026"
+      }
+    }
+  }
+}

@@ -1,0 +1,71 @@
+name: SynapsNotes-iOS
+options:
+  bundleIdPrefix: com.synapsnotes
+  xcodeVersion: "15.0"
+  deploymentTarget:
+    iOS: 17.0
+
+schemes:
+  SynapsNotes-iOS:
+    shared: true
+    build:
+      targets:
+        SynapsNotes: all
+        SynapsNotesTests: [test]
+    test:
+      gatherCoverageData: false
+      targets:
+        - name: SynapsNotesTests
+
+targets:
+  SynapsNotes:
+    type: application
+    platform: iOS
+    deploymentTarget: 17.0
+    sources:
+      - path: App
+        type: group
+        createIntermediateGroups: true
+      - path: Core
+        type: group
+        createIntermediateGroups: true
+      - path: Data
+        type: group
+        createIntermediateGroups: true
+      - path: Domain
+        type: group
+        createIntermediateGroups: true
+      - path: UI
+        type: group
+        createIntermediateGroups: true
+    dependencies:
+      - framework: Frameworks/llama.xcframework
+        embed: true
+    resources:
+      - path: Resources
+        type: group
+        createIntermediateGroups: true
+    settings:
+      PRODUCT_NAME: SynapsNotes-iOS
+      PRODUCT_BUNDLE_IDENTIFIER: com.synapsnotes.ios
+      SWIFT_VERSION: 5.10
+      SUPPORTED_PLATFORMS: iphoneos iphonesimulator
+      GENERATE_INFOPLIST_FILE: YES
+      INFOPLIST_KEY_ITSAppUsesNonExemptEncryption: false
+      INFOPLIST_KEY_UIFileSharingEnabled: true
+      INFOPLIST_KEY_LSSupportsOpeningDocumentsInPlace: true
+
+  SynapsNotesTests:
+    type: bundle.unit-test
+    platform: iOS
+    deploymentTarget: 17.0
+    sources:
+      - path: Tests
+        type: group
+        createIntermediateGroups: true
+    dependencies:
+      - target: SynapsNotes
+    settings:
+      PRODUCT_NAME: SynapsNotesTests
+      SWIFT_VERSION: 5.10
+      SUPPORTED_PLATFORMS: iphoneos iphonesimulator

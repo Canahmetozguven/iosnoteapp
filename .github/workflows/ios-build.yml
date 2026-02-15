@@ -1,0 +1,71 @@
+name: iOS Build
+
+on:
+  push:
+    branches: [ "master", "main" ]
+  pull_request:
+    branches: [ "master", "main" ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build iOS App
+    runs-on: macos-14 # Uses M1 Mac runners (free tier)
+    
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        submodules: recursive
+
+    - name: Install Dependencies
+      run: |
+        brew install cmake xcodegen
+
+    - name: Validate iOS Build Configuration
+      run: |
+        grep -q '"scheme": "SynapsNotes-iOS"' eas.json
+        grep -q '^name: SynapsNotes-iOS' ios/project.yml
+        grep -q 'PRODUCT_BUNDLE_IDENTIFIER: com.synapsnotes.ios' ios/project.yml
+        
+    - name: Build llama.cpp (AI Engine)
+      run: |
+        cd ios/llama
+        chmod +x build-xcframework.sh
+        ./build-xcframework.sh
+        ls -R build-apple/llama.xcframework
+
+    - name: Move Llama Framework
+      run: |
+        mkdir -p ios/Frameworks
+        cp -R ios/llama/build-apple/llama.xcframework ios/Frameworks/
+
+    - name: Generate Project with xcodegen
+      run: |
+        cd ios
+        xcodegen
+        PBXPROJ="SynapsNotes-iOS.xcodeproj/project.pbxproj"
+        sed -i '' 's/objectVersion = 77;/objectVersion = 60;/g' "$PBXPROJ"
+        sed -i '' '/minimizedProjectReferenceProxies = 1;/d' "$PBXPROJ"
+        sed -i '' '/preferredProjectObjectVersion = 56;/d' "$PBXPROJ"
+        grep -n "objectVersion" "$PBXPROJ" | head -1
+        xcodebuild -list -project SynapsNotes-iOS.xcodeproj
+
+    - name: Build iOS App
+      run: |
+        cd ios
+        
+        xcodebuild -project SynapsNotes-iOS.xcodeproj \
+                   -scheme SynapsNotes-iOS \
+                   -sdk iphoneos \
+                   -configuration Release \
+                   -derivedDataPath build \
+                   CODE_SIGN_IDENTITY="" \
+                   CODE_SIGNING_REQUIRED=NO \
+                   CODE_SIGNING_ALLOWED=NO
+
+    - name: Upload .app Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: SynapsNotes-iOS-App
+        path: ios/build/Build/Products/Release-iphoneos/SynapsNotes-iOS.app

@@ -1,0 +1,150 @@
+name: iOS TestFlight (GitHub)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ios-testflight-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Build and Upload TestFlight
+    runs-on: macos-14
+    timeout-minutes: 90
+    env:
+      FASTLANE_SKIP_UPDATE_CHECK: "1"
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Validate required secrets
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_CONTENT_BASE64: ${{ secrets.ASC_KEY_CONTENT_BASE64 }}
+          IOS_DIST_P12_BASE64: ${{ secrets.IOS_DIST_P12_BASE64 }}
+          IOS_DIST_P12_PASSWORD: ${{ secrets.IOS_DIST_P12_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          missing=0
+          for var in ASC_KEY_ID ASC_ISSUER_ID ASC_KEY_CONTENT_BASE64 IOS_DIST_P12_BASE64 IOS_DIST_P12_PASSWORD APPLE_TEAM_ID; do
+            if [ -z "${!var}" ]; then
+              echo "Missing GitHub secret: $var"
+              missing=1
+            fi
+          done
+          if [ "$missing" -ne 0 ]; then
+            exit 1
+          fi
+
+      - name: Setup Ruby and Bundler cache
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.2"
+          bundler-cache: true
+
+      - name: Install build dependencies
+        run: |
+          brew install cmake xcodegen
+          xcodebuild -version
+          xcodegen --version
+
+      - name: Build llama.cpp XCFramework
+        run: |
+          cd ios/llama
+          chmod +x build-xcframework.sh
+          ./build-xcframework.sh
+          ls -R build-apple/llama.xcframework
+
+      - name: Move llama XCFramework
+        run: |
+          mkdir -p ios/Frameworks
+          rm -rf ios/Frameworks/llama.xcframework
+          cp -R ios/llama/build-apple/llama.xcframework ios/Frameworks/
+
+      - name: Generate Xcode project
+        run: |
+          cd ios
+          xcodegen
+          PBXPROJ="SynapsNotes-iOS.xcodeproj/project.pbxproj"
+          # Keep generated project compatible with Xcode 15.4 on CI images.
+          sed -i '' 's/objectVersion = 77;/objectVersion = 60;/g' "$PBXPROJ"
+          sed -i '' '/minimizedProjectReferenceProxies = 1;/d' "$PBXPROJ"
+          sed -i '' '/preferredProjectObjectVersion = 56;/d' "$PBXPROJ"
+          grep -n "objectVersion" "$PBXPROJ" | head -1
+          xcodebuild -list -project SynapsNotes-iOS.xcodeproj
+
+      - name: Import distribution certificate
+        uses: apple-actions/import-codesign-certs@v5
+        with:
+          p12-file-base64: ${{ secrets.IOS_DIST_P12_BASE64 }}
+          p12-password: ${{ secrets.IOS_DIST_P12_PASSWORD }}
+
+      - name: Decode App Store Connect private key
+        id: decode_key
+        env:
+          ASC_KEY_CONTENT_BASE64: ${{ secrets.ASC_KEY_CONTENT_BASE64 }}
+        run: |
+          python3 - <<'PY'
+          import base64
+          import os
+
+          decoded = base64.b64decode(os.environ["ASC_KEY_CONTENT_BASE64"]).decode("utf-8")
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as out:
+              out.write("api_private_key<<EOF\n")
+              out.write(decoded)
+              if not decoded.endswith("\n"):
+                  out.write("\n")
+              out.write("EOF\n")
+          PY
+
+      - name: Download provisioning profile from App Store Connect
+        id: provisioning
+        uses: apple-actions/download-provisioning-profiles@v4
+        with:
+          bundle-id: com.synapsnotes.ios
+          profile-type: IOS_APP_STORE
+          issuer-id: ${{ secrets.ASC_ISSUER_ID }}
+          api-key-id: ${{ secrets.ASC_KEY_ID }}
+          api-private-key: ${{ steps.decode_key.outputs.api_private_key }}
+
+      - name: Resolve provisioning profile name
+        id: resolve_profile
+        env:
+          PROFILES_JSON: ${{ steps.provisioning.outputs.profiles }}
+        run: |
+          PROFILE_NAME=$(python3 - <<'PY'
+          import json, os
+          profiles = json.loads(os.environ["PROFILES_JSON"])
+          if not profiles:
+              raise SystemExit("No provisioning profiles downloaded")
+          print(profiles[0]["name"])
+          PY
+          )
+          echo "profile_name=$PROFILE_NAME" >> "$GITHUB_OUTPUT"
+          echo "Using provisioning profile: $PROFILE_NAME"
+
+      - name: Build and upload to TestFlight
+        env:
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_CONTENT: ${{ secrets.ASC_KEY_CONTENT_BASE64 }}
+          APP_IDENTIFIER: com.synapsnotes.ios
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          PROFILE_NAME: ${{ steps.resolve_profile.outputs.profile_name }}
+        run: |
+          bundle exec fastlane ios github_testflight
+
+      - name: Upload IPA artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: SynapsNotes-iOS-ipa
+          path: build/SynapsNotes-iOS.ipa
+          if-no-files-found: error
