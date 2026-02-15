@@ -13,6 +13,23 @@ jobs:
       uses: actions/checkout@v4
       with:
         submodules: recursive
+    
+    - name: Show revision
+      run: |
+        echo "GITHUB_SHA=$GITHUB_SHA"
+        git log -1 --oneline
+
+    - name: Sanity check (Drive auth + main-actor init)
+      run: |
+        set -euo pipefail
+        if grep -n "sharedInstance.addScopes" ios/Core/Sync/Drive/DriveAuthManager.swift; then
+          echo "DriveAuthManager uses a removed GoogleSignIn API (expected result.user.addScopes)."
+          exit 1
+        fi
+        if grep -n "auth: DriveAuthManager = DriveAuthManager()" ios/Core/Sync/Drive/DriveSyncService.swift; then
+          echo "DriveSyncService uses a default arg that can break MainActor isolation."
+          exit 1
+        fi
 
     - name: Select Xcode
       uses: maxim-lobanov/setup-xcode@v1
