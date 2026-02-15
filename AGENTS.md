@@ -42,7 +42,15 @@ Native iOS port of the Android LLM Note App. Built with SwiftUI, SwiftData, and 
 ## Critical Commands
 - **Project Gen**: `xcodegen`
 - **Build (CI)**: `xcodebuild -project ios/SynapsNotes-iOS.xcodeproj -scheme SynapsNotes-iOS -sdk iphonesimulator`
-- **Build (Cloud Internal)**: `eas build --platform ios --profile development`
-- **Build (Cloud TestFlight)**: `eas build --platform ios --profile production`
-- **Submit (TestFlight/App Store Connect)**: `eas submit --platform ios --profile production`
+- **CI Build (Unsigned)**: GitHub Actions workflow `.github/workflows/ios-build.yml`
+- **TestFlight Upload (Signed)**: GitHub Actions workflow `.github/workflows/ios-testflight.yml`
+- **Fastlane (CI lanes)**:
+  - Build only: `bundle exec fastlane ios github_build`
+  - Upload only: `bundle exec fastlane ios github_upload`
+  - Build + upload: `bundle exec fastlane ios github_testflight`
 - **Test**: `xcodebuild test -project ios/SynapsNotes-iOS.xcodeproj -scheme SynapsNotes-iOS -sdk iphonesimulator -destination 'platform=iOS Simulator,name=iPhone 15'`
+
+## Release Notes
+- App Store Connect upload requires Xcode 16+ (iOS 18+ SDK).
+- App icons must be **opaque** (no alpha channel) for TestFlight/App Store validation.
+  - Update icon on Windows: `pwsh -NoProfile -File ios/scripts/update_appicon.ps1 -SourcePng C:\path\to\logo.png -CommitAndPush`
