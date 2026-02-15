@@ -25,11 +25,15 @@ final class DriveAuthManager {
             // Ensure Drive scope for reading/writing backups.
             let driveScope = "https://www.googleapis.com/auth/drive.file"
             let granted = result.user.grantedScopes ?? []
+            let user: GIDGoogleUser
             if !granted.contains(driveScope) {
-                _ = try await GIDSignIn.sharedInstance.addScopes([driveScope], presenting: presenter)
+                // GoogleSignIn v8: additional scopes are requested via the signed-in user instance.
+                let scoped = try await result.user.addScopes([driveScope], presenting: presenter)
+                user = scoped.user
+            } else {
+                user = result.user
             }
 
-            let user = GIDSignIn.sharedInstance.currentUser ?? result.user
             userEmail = user.profile?.email
             accessToken = user.accessToken.tokenString
             isConnected = true

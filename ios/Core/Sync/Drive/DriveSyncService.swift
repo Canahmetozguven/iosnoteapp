@@ -23,9 +23,9 @@ final class DriveSyncService {
     private let exporter = BackupExporter()
     private let importer = BackupImporter()
 
-    init(defaults: UserDefaults = .standard, auth: DriveAuthManager = DriveAuthManager(), api: DriveAPIClient = DriveAPIClient()) {
+    init(defaults: UserDefaults = .standard, auth: DriveAuthManager? = nil, api: DriveAPIClient = DriveAPIClient()) {
         self.defaults = defaults
-        self.auth = auth
+        self.auth = auth ?? DriveAuthManager()
         self.api = api
     }
 
@@ -46,7 +46,7 @@ final class DriveSyncService {
             do {
                 if try await isLocalEmpty(modelContext: modelContext) {
                     status = "Checking backups..."
-                    try await auth.refreshTokenIfNeeded()
+                    await auth.refreshTokenIfNeeded()
                     guard let token = auth.accessToken else { throw DriveAPIError.notAuthenticated }
                     let folderId = try await ensureFolderId(accessToken: token)
                     let backups = try await api.listBackups(inFolderId: folderId, accessToken: token)
@@ -84,7 +84,7 @@ final class DriveSyncService {
         defer { isSyncing = false }
 
         do {
-            try await auth.refreshTokenIfNeeded()
+            await auth.refreshTokenIfNeeded()
             guard let token = auth.accessToken else { throw DriveAPIError.notAuthenticated }
             let folderId = try await ensureFolderId(accessToken: token)
 
@@ -126,4 +126,3 @@ final class DriveSyncService {
         return true
     }
 }
-
