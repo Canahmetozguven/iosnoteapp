@@ -6,10 +6,9 @@
 - Bundle ID: `com.synapsnotes.ios`
 
 ## Prerequisites
-- Xcode 15+ with iOS 17 SDK
+- Xcode 16+ (App Store Connect upload requires iOS 18+ SDK)
 - Homebrew tools: `cmake`, `xcodegen`
-- EAS CLI (`npm i -g eas-cli` or project-managed equivalent)
-- Apple Developer account connected to EAS for signing/submission
+- Ruby/Bundler for Fastlane (CI uses `ruby/setup-ruby` with `bundler-cache: true`)
 
 ## Local Build (Device/CI-style)
 1. Build `llama.xcframework` and generate project:
@@ -23,24 +22,13 @@
 2. Run tests:
    - `xcodebuild test -project ios/SynapsNotes-iOS.xcodeproj -scheme SynapsNotes-iOS -sdk iphonesimulator -destination 'platform=iOS Simulator,name=iPhone 15'`
 
-## EAS Build Profiles
-- Internal build:
-  - `eas build --platform ios --profile development`
-- Simulator preview build:
-  - `eas build --platform ios --profile preview`
-- TestFlight/App Store build:
-  - `eas build --platform ios --profile production`
-
-## EAS Submit
-- Submit latest production build:
-  - `eas submit --platform ios --profile production`
-
 ## GitHub Actions (No EAS Build Credits)
 - CI build artifact (unsigned):
   - Workflow: `.github/workflows/ios-build.yml`
 - Signed TestFlight upload (manual trigger):
   - Workflow: `.github/workflows/ios-testflight.yml`
-  - Uses Fastlane lane: `fastlane/Fastfile` -> `ios github_testflight`
+  - Uses Fastlane lanes: `fastlane/Fastfile` -> `ios github_build` then `ios github_upload`
+  - The workflow also unzips the built IPA and asserts `Assets.car` exists before upload.
   - Fastlane version is pinned in `Gemfile` and executed via `bundle exec`.
 
 ### Required GitHub Secrets (for `ios-testflight.yml`)
@@ -61,8 +49,13 @@ The workflow downloads the App Store provisioning profile directly from App Stor
   - `[Convert]::ToBase64String([IO.File]::ReadAllBytes("AuthKey_<KEY_ID>.p8"))`
   - `[Convert]::ToBase64String([IO.File]::ReadAllBytes("dist.p12"))`
 
+## App Icon Notes (Upload Validation)
+App Store Connect rejects App Store icons with transparency. The generated AppIcon set is produced as **opaque RGB** (no alpha channel).
+
+To update the icon from a PNG on Windows:
+- `pwsh -NoProfile -File ios/scripts/update_appicon.ps1 -SourcePng C:\\path\\to\\logo.png -CommitAndPush`
+
 ## CI Consistency Checklist
-- `eas.json` uses `"scheme": "SynapsNotes-iOS"` for all iOS build profiles.
 - `ios/project.yml` starts with `name: SynapsNotes-iOS`.
 - `ios/project.yml` sets `PRODUCT_BUNDLE_IDENTIFIER: com.synapsnotes.ios`.
 - GitHub workflow references:
@@ -70,9 +63,5 @@ The workflow downloads the App Store provisioning profile directly from App Stor
   - `-scheme SynapsNotes-iOS`
   - artifact path `Release-iphoneos/SynapsNotes-iOS.app`
 
-## Credential Expectations (EAS Managed)
-- Default mode is EAS-managed credentials.
-- First production build may prompt for:
-  - Apple Team authentication
-  - Distribution certificate/provisioning creation
-  - App Store Connect app linkage
+## (Optional) EAS
+This repo includes `eas.json` for reference, but the current release pipeline uses **GitHub Actions + Fastlane**.

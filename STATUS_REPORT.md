@@ -3,7 +3,7 @@
 ## Project State
 - **Architecture**: Native iOS (SwiftUI + SwiftData)
 - **AI Core**: llama.cpp (Remote Swift Package)
-- **Build System**: GitHub Actions + EAS
+- **Build System**: GitHub Actions + Fastlane (TestFlight upload)
 - **Development Environment**: Native iOS
 
 ## Recent Updates (Phase 2 & 3 Complete)
@@ -19,6 +19,7 @@
 1.  **Verification**: Pull the changes to a Mac environment.
 2.  **Build**: Run `xcodegen` and open `SynapsNotes-iOS.xcodeproj`.
 3.  **Run**: Test on a physical device (iPhone 15 Pro recommended) for Metal acceleration.
+4.  **Release**: Use GitHub Actions `.github/workflows/ios-testflight.yml` to build + upload to TestFlight.
 
 ## Pending / Next Steps
 - **Model Import**: Verify `.gguf` file import via Finder/Files app works as expected.
