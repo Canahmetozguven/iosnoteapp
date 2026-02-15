@@ -16,7 +16,9 @@ platform :ios do
       # Important: don't pass PROVISIONING_PROFILE_SPECIFIER / manual signing to xcodebuild.
       # Swift Package targets (GoogleSignIn, Promises, ZIPFoundation, ...) are not signable with profiles.
       # We archive unsigned, then sign at export time via export_options.provisioningProfiles.
-      xcargs: "CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO MARKETING_VERSION=#{marketing_version} CURRENT_PROJECT_VERSION=#{build_number} INFOPLIST_FILE=Resources/Info.plist GENERATE_INFOPLIST_FILE=NO ASSETCATALOG_COMPILER_APPICON_NAME=AppIcon",
+      # Keep xcargs minimal: overriding Info.plist / app icon settings will also affect Swift Package targets
+      # and can break archiving (missing Info.plist in package bundles, etc.).
+      xcargs: "CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO MARKETING_VERSION=#{marketing_version} CURRENT_PROJECT_VERSION=#{build_number}",
       output_directory: "build",
       output_name: "SynapsNotes-iOS.ipa",
       export_options: {
