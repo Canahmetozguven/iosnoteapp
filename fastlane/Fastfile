@@ -34,6 +34,7 @@ platform :ios do
 
     upload_to_testflight(
       api_key: api_key,
+      app_identifier: ENV.fetch("APP_IDENTIFIER"),
       ipa: "build/SynapsNotes-iOS.ipa",
       skip_waiting_for_build_processing: true
     )
