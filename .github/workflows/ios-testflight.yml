@@ -143,6 +143,8 @@ jobs:
           APP_IDENTIFIER: com.synapsnotes.ios
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           PROFILE_NAME: ${{ steps.resolve_profile.outputs.profile_name }}
+          MARKETING_VERSION: 1.0.0
+          BUILD_NUMBER: ${{ github.run_number }}
         run: |
           bundle exec fastlane ios github_testflight
 
