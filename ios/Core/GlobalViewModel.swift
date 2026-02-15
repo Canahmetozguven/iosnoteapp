@@ -4,20 +4,33 @@ import SwiftData
 
 @Observable
 class GlobalViewModel {
-    var modelManager = ModelManager()
+    let catalogStore = ModelCatalogStore()
+    let downloads = ModelDownloadManager.shared.viewModel()
+    private let downloadManager = ModelDownloadManager.shared
+    let driveSync = DriveSyncService()
     var llamaContext = LlamaContext()
     let vectorSearchService = VectorSearchService()
     
     private enum PreferenceKey {
-        static let activeModelName = "active_model_name"
+        static let activeChatModelId = "active_chat_model_id"
+        static let activeEmbeddingModelId = "active_embedding_model_id"
         static let lowPowerMode = "low_power_mode"
     }
     private let defaults = UserDefaults.standard
 
-    var isModelLoaded: Bool = false
-    var currentModelName: String? = nil
-    var loadingError: String? = nil
+    var isChatModelLoaded: Bool = false
+    var isEmbeddingModelLoaded: Bool = false
+
+    var currentChatModelId: String? = nil
+    var currentEmbeddingModelId: String? = nil
+
+    var modelError: String? = nil
     var isBusy: Bool = false
+
+    func displayName(for modelId: String?) -> String {
+        guard let modelId else { return "None" }
+        return catalogStore.items.first(where: { $0.id == modelId })?.name ?? modelId
+    }
     
     // Defaults:
     // - Simulator: true (no practical Metal acceleration for this app flow)
@@ -45,46 +58,124 @@ class GlobalViewModel {
             #endif
             defaults.set(isLowPowerMode, forKey: PreferenceKey.lowPowerMode)
         }
-        currentModelName = defaults.string(forKey: PreferenceKey.activeModelName)
+        currentChatModelId = defaults.string(forKey: PreferenceKey.activeChatModelId)
+        currentEmbeddingModelId = defaults.string(forKey: PreferenceKey.activeEmbeddingModelId)
     }
     
-    func loadModel(filename: String) {
-        guard let path = modelManager.getModelPath(filename: filename) else {
-            self.loadingError = "File not found"
+    func isInstalled(_ item: ModelCatalogItem) -> Bool {
+        ModelStorage.shared.exists(item)
+    }
+
+    func startDownload(_ item: ModelCatalogItem) {
+        downloadManager.startDownload(item)
+    }
+
+    func cancelDownload(modelId: String) {
+        downloadManager.cancelDownload(modelId: modelId)
+    }
+
+    func deleteDownloaded(_ item: ModelCatalogItem) {
+        do {
+            // If deleting active model, unload it first.
+            if currentChatModelId == item.id { unloadChatModel() }
+            if currentEmbeddingModelId == item.id { unloadEmbeddingModel() }
+            try downloadManager.deleteDownloaded(item)
+        } catch {
+            modelError = error.localizedDescription
+        }
+    }
+
+    func loadChatModel(item: ModelCatalogItem) {
+        guard item.kind == .chat else { return }
+        guard let path = modelPathIfInstalled(item) else {
+            modelError = "Model file not found"
             return
         }
         
-        self.isBusy = true
-        self.loadingError = nil
+        isBusy = true
+        modelError = nil
         
         Task {
             do {
                 // Pass low power mode flag
                 try await llamaContext.loadModel(path: path, lowMemory: isLowPowerMode)
-                // Attempt to load embedding model (same file for now or separate logic)
-                // For simplicity in MVP, assume same model or fail gracefully
-                try? await llamaContext.loadEmbeddingModel(path: path, lowMemory: isLowPowerMode) 
                 
                 await MainActor.run {
-                    self.isModelLoaded = true
-                    self.currentModelName = filename
-                    self.defaults.set(filename, forKey: PreferenceKey.activeModelName)
+                    self.isChatModelLoaded = true
+                    self.currentChatModelId = item.id
+                    self.defaults.set(item.id, forKey: PreferenceKey.activeChatModelId)
                     self.isBusy = false
                 }
             } catch {
                 await MainActor.run {
-                    self.loadingError = error.localizedDescription
-                    self.isModelLoaded = false
+                    self.modelError = error.localizedDescription
+                    self.isChatModelLoaded = false
                     self.isBusy = false
                 }
             }
         }
     }
 
+    func loadEmbeddingModel(item: ModelCatalogItem) {
+        guard item.kind == .embedding else { return }
+        guard let path = modelPathIfInstalled(item) else {
+            modelError = "Model file not found"
+            return
+        }
+
+        isBusy = true
+        modelError = nil
+
+        Task {
+            do {
+                try await llamaContext.loadEmbeddingModel(path: path, lowMemory: isLowPowerMode)
+                await MainActor.run {
+                    self.isEmbeddingModelLoaded = true
+                    self.currentEmbeddingModelId = item.id
+                    self.defaults.set(item.id, forKey: PreferenceKey.activeEmbeddingModelId)
+                    self.isBusy = false
+                }
+            } catch {
+                await MainActor.run {
+                    self.modelError = error.localizedDescription
+                    self.isEmbeddingModelLoaded = false
+                    self.isBusy = false
+                }
+            }
+        }
+    }
+
+    func unloadChatModel() {
+        Task {
+            await llamaContext.unloadChat()
+            await MainActor.run {
+                self.isChatModelLoaded = false
+                self.currentChatModelId = nil
+                self.defaults.removeObject(forKey: PreferenceKey.activeChatModelId)
+            }
+        }
+    }
+
+    func unloadEmbeddingModel() {
+        Task {
+            await llamaContext.unloadEmbedding()
+            await MainActor.run {
+                self.isEmbeddingModelLoaded = false
+                self.currentEmbeddingModelId = nil
+                self.defaults.removeObject(forKey: PreferenceKey.activeEmbeddingModelId)
+            }
+        }
+    }
+
     func handleSceneDidBecomeActive() {
-        modelManager.refreshModels()
-        guard !isModelLoaded, !isBusy, let modelName = currentModelName else { return }
-        loadModel(filename: modelName)
+        downloadManager.restorePendingTasks()
+
+        if !isBusy, !isChatModelLoaded, let id = currentChatModelId, let item = findItem(id: id), modelPathIfInstalled(item) != nil {
+            loadChatModel(item: item)
+        }
+        if !isBusy, !isEmbeddingModelLoaded, let id = currentEmbeddingModelId, let item = findItem(id: id), modelPathIfInstalled(item) != nil {
+            loadEmbeddingModel(item: item)
+        }
     }
 
     func handleSceneDidEnterBackground() {
@@ -92,7 +183,8 @@ class GlobalViewModel {
         Task {
             await llamaContext.unload()
         }
-        isModelLoaded = false
+        isChatModelLoaded = false
+        isEmbeddingModelLoaded = false
         isBusy = false
     }
     
@@ -102,7 +194,7 @@ class GlobalViewModel {
     var retrievedContext: [Note] = []
     
     func sendMessage(text: String, notes: [Note] = []) {
-        guard isModelLoaded, !isBusy else { return }
+        guard isChatModelLoaded, !isBusy else { return }
         
         // Create and append user message
         let userMessage = ChatMessage(role: "user", content: text)
@@ -192,7 +284,7 @@ class GlobalViewModel {
     /// Index all notes by generating embeddings.
     /// Updates note.embedding directly (Note is a class, SwiftData persists changes).
     func indexAllNotes(notes: [Note]) {
-        guard isModelLoaded, !isBusy else { return }
+        guard isEmbeddingModelLoaded, !isBusy else { return }
         
         isBusy = true
         indexingProgress = 0.0
@@ -321,5 +413,20 @@ class GlobalViewModel {
             cleaned = cleaned.replacingOccurrences(of: token, with: "")
         }
         return cleaned.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+}
+
+private extension GlobalViewModel {
+    func findItem(id: String) -> ModelCatalogItem? {
+        catalogStore.items.first(where: { $0.id == id })
+    }
+
+    func modelPathIfInstalled(_ item: ModelCatalogItem) -> String? {
+        do {
+            let url = try ModelStorage.shared.fileURL(for: item)
+            return FileManager.default.fileExists(atPath: url.path) ? url.path : nil
+        } catch {
+            return nil
+        }
     }
 }

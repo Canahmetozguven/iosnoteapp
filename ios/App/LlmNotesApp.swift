@@ -1,10 +1,14 @@
 import SwiftUI
 import SwiftData
+#if canImport(GoogleSignIn)
+import GoogleSignIn
+#endif
 
 @main
 struct LlmNotesApp: App {
     @Environment(\.scenePhase) private var scenePhase
     @State private var globalViewModel = GlobalViewModel()
+    @UIApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
 
     var sharedModelContainer: ModelContainer = {
         let schema = Schema([
@@ -24,6 +28,11 @@ struct LlmNotesApp: App {
         WindowGroup {
             ContentView()
                 .environment(globalViewModel)
+                .onOpenURL { url in
+                    #if canImport(GoogleSignIn)
+                    _ = GIDSignIn.sharedInstance.handle(url)
+                    #endif
+                }
                 .onChange(of: scenePhase) { _, newPhase in
                     switch newPhase {
                     case .active:

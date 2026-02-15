@@ -8,14 +8,14 @@ struct ChatView: View {
     
     var body: some View {
         VStack {
-            if !vm.isModelLoaded {
+            if !vm.isChatModelLoaded {
                 VStack(spacing: 16) {
                     Image(systemName: "exclamationmark.triangle")
                         .font(.largeTitle)
                         .foregroundStyle(.orange)
                     Text("Model not loaded")
                         .font(.headline)
-                    Text("Please go to Settings and load a .gguf model.")
+                    Text("Please go to Settings, download a chat model, and tap Load Model.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
