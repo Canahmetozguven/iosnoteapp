@@ -41,6 +41,8 @@ Native iOS port of the Android LLM Note App. Built with SwiftUI, SwiftData, and 
 
 ## Critical Commands
 - **Project Gen**: `xcodegen`
+- **Preflight (WSL)**: `wsl bash -lc "cd /mnt/c/Users/canahmet/Documents/projects/ios_note_app && bash scripts/ci/ios_preflight.sh"`
+- **Preflight (Repo root)**: `bash scripts/ci/ios_preflight.sh`
 - **Build (CI)**: `xcodebuild -project ios/SynapsNotes-iOS.xcodeproj -scheme SynapsNotes-iOS -sdk iphonesimulator`
 - **CI Build (Unsigned)**: GitHub Actions workflow `.github/workflows/ios-build.yml`
 - **TestFlight Upload (Signed)**: GitHub Actions workflow `.github/workflows/ios-testflight.yml`
