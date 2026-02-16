@@ -278,9 +278,10 @@ private struct ModelRow: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
         default:
-            if isActive {
+            if isInstalled {
                 Image(systemName: "checkmark.circle.fill")
-                    .foregroundStyle(AppTheme.greenSuccess)
+                    .foregroundStyle(isActive ? AppTheme.greenSuccess : AppTheme.primary)
+                    .accessibilityLabel(isActive ? "Loaded model" : "Downloaded model")
             }
         }
     }
