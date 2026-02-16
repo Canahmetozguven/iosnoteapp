@@ -262,7 +262,6 @@ struct NoteEditorView: View {
         aiController.previewDiffLines(hideUnchanged: hideUnchangedDiffLines)
     }
 
-    @ViewBuilder
     private func diffLineRow(_ line: NoteEditorAIController.PreviewDiffLine) -> some View {
         let marker: String
         let tint: Color
@@ -287,7 +286,7 @@ struct NoteEditorView: View {
             background = Color(.tertiarySystemFill)
         }
 
-        HStack(alignment: .top, spacing: 8) {
+        return HStack(alignment: .top, spacing: 8) {
             Text(marker)
                 .font(.system(.caption, design: .monospaced))
                 .foregroundStyle(tint)
