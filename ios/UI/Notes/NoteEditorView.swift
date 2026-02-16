@@ -20,34 +20,15 @@ struct NoteEditorView: View {
 
             actionBar
 
-            ZStack(alignment: .topLeading) {
-                if note.content.isEmpty {
-                    Text("Write your note here...")
-                        .foregroundStyle(.tertiary)
-                        .padding(.horizontal)
-                        .padding(.top, 8)
-                }
-
-                SelectionAwareTextEditor(
-                    text: $note.content,
-                    selectedRange: $editorSelection,
-                    isEditable: !aiController.hasPendingPreview
-                )
-                .padding(.horizontal)
-            }
-            .frame(maxHeight: .infinity)
-
-            if aiController.hasPendingPreview {
-                previewPanel
-            }
+            editorSurface
         }
         .navigationBarTitleDisplayMode(.inline)
         .background(Color(.systemBackground))
-        .onChange(of: note.title) { _ in
+        .onChange(of: note.title) {
             note.updatedAt = Date()
             vm.handleNoteEdited(note, modelContext: modelContext)
         }
-        .onChange(of: note.content) { _ in
+        .onChange(of: note.content) {
             note.updatedAt = Date()
             vm.handleNoteEdited(note, modelContext: modelContext)
             editorSelection = clampedSelection(editorSelection, in: note.content)
@@ -117,17 +98,39 @@ struct NoteEditorView: View {
         }
     }
 
-    private var previewPanel: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 8) {
-                Text("\(aiController.activeAction?.title ?? "AI") Preview")
-                    .font(.headline)
-                Spacer()
-                if aiController.isGenerating {
-                    ProgressView()
-                        .controlSize(.small)
-                }
+    private var editorSurface: some View {
+        Group {
+            if aiController.hasPendingPreview {
+                inlinePreviewSurface
+            } else {
+                liveEditorSurface
             }
+        }
+        .frame(maxHeight: .infinity)
+    }
+
+    private var liveEditorSurface: some View {
+        ZStack(alignment: .topLeading) {
+            if note.content.isEmpty {
+                Text("Write your note here...")
+                    .foregroundStyle(.tertiary)
+                    .padding(.horizontal)
+                    .padding(.top, 8)
+            }
+
+            SelectionAwareTextEditor(
+                text: $note.content,
+                selectedRange: $editorSelection,
+                isEditable: true
+            )
+            .padding(.horizontal)
+        }
+    }
+
+    private var inlinePreviewSurface: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            inlinePreviewControls
+            Divider()
 
             if !aiController.previewThought.isEmpty {
                 VStack(alignment: .leading, spacing: 4) {
@@ -139,66 +142,83 @@ struct NoteEditorView: View {
                         .foregroundStyle(.secondary)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
+                .padding(.horizontal)
+                .padding(.top, 10)
+                .padding(.bottom, 6)
             }
 
-            VStack(alignment: .leading, spacing: 4) {
+            HStack {
                 Text("Diff Preview")
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.secondary)
-
+                Spacer()
                 Toggle("Hide unchanged", isOn: $hideUnchangedDiffLines)
-                    .font(.caption)
-                    .toggleStyle(.switch)
+                    .labelsHidden()
+            }
+            .padding(.horizontal)
+            .padding(.top, 10)
 
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 4) {
-                        if displayedDiffLines.isEmpty {
-                            Text("Generating preview...")
-                                .foregroundStyle(.secondary)
-                        } else {
-                            ForEach(Array(displayedDiffLines.enumerated()), id: \.offset) { _, line in
-                                diffLineRow(line)
-                            }
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 4) {
+                    if displayedDiffLines.isEmpty {
+                        Text("Generating preview...")
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal)
+                            .padding(.top, 8)
+                    } else {
+                        ForEach(Array(displayedDiffLines.enumerated()), id: \.offset) { _, line in
+                            diffLineRow(line)
                         }
                     }
-                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .frame(maxHeight: 220)
-                .padding(8)
-                .background(Color(.systemBackground))
-                .clipShape(RoundedRectangle(cornerRadius: 8))
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal)
+                .padding(.vertical, 8)
             }
 
             if let error = aiController.errorMessage {
                 Text(error)
                     .font(.caption)
                     .foregroundStyle(.red)
-            }
-
-            HStack(spacing: 10) {
-                if aiController.isGenerating {
-                    Button("Stop") {
-                        aiController.stop(llamaContext: vm.llamaContext)
-                    }
-                }
-
-                Button("Reject", role: .destructive) {
-                    rejectPreview()
-                }
-
-                Spacer()
-
-                Button("Accept") {
-                    acceptPreview()
-                }
-                .disabled(aiController.isGenerating || !aiController.canAcceptPreview)
+                    .padding(.horizontal)
+                    .padding(.bottom, 8)
             }
         }
-        .padding(12)
-        .background(Color(.secondarySystemBackground))
-        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .background(Color(.secondarySystemBackground).opacity(0.55))
+    }
+
+    private var inlinePreviewControls: some View {
+        HStack(spacing: 10) {
+            Label("\(aiController.activeAction?.title ?? "AI") Draft", systemImage: "wand.and.stars")
+                .font(.subheadline.weight(.semibold))
+
+            if aiController.isGenerating {
+                ProgressView()
+                    .controlSize(.small)
+            }
+
+            Spacer()
+
+            if aiController.isGenerating {
+                Button("Stop") {
+                    aiController.stop(llamaContext: vm.llamaContext)
+                }
+                .buttonStyle(.bordered)
+            }
+
+            Button("Reject", role: .destructive) {
+                rejectPreview()
+            }
+            .buttonStyle(.bordered)
+
+            Button("Accept") {
+                acceptPreview()
+            }
+            .buttonStyle(.borderedProminent)
+            .disabled(aiController.isGenerating || !aiController.canAcceptPreview)
+        }
         .padding(.horizontal)
-        .padding(.bottom, 8)
+        .padding(.vertical, 10)
     }
 
     private func startAction(_ action: NoteAIAction) {
