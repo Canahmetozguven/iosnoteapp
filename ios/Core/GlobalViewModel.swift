@@ -58,6 +58,7 @@ class GlobalViewModel {
     var lastRAGPreparedNotesCount: Int = 0
     var lastRAGEligibleNotesCount: Int = 0
     var lastRAGRetrievedCount: Int = 0
+    var lastRAGRetrievedTitles: [String] = []
 
     // Chat state (session-aware and persisted in SwiftData).
     var sessions: [ChatSession] = []
@@ -296,6 +297,7 @@ class GlobalViewModel {
         lastRAGPreparedNotesCount = notes.count
         lastRAGEligibleNotesCount = 0
         lastRAGRetrievedCount = 0
+        lastRAGRetrievedTitles = []
 
         generationTask = Task { @MainActor in
             var ragContext: [Note] = []
@@ -306,7 +308,22 @@ class GlobalViewModel {
                     let eligibleNotes = notes.filter { isNoteEmbeddingFresh($0) }
                     self.lastRAGEligibleNotesCount = eligibleNotes.count
                     if eligibleNotes.isEmpty {
-                        self.ragStatus = .noIndexedNotes
+                        let keywordFallback = vectorSearchService.findKeywordMatches(
+                            queryText: userMessageText,
+                            notes: notes,
+                            topK: 3
+                        )
+                        if keywordFallback.isEmpty {
+                            self.ragStatus = .noIndexedNotes
+                        } else {
+                            ragContext = keywordFallback
+                            self.retrievedContext = keywordFallback
+                            self.lastRAGRetrievedCount = keywordFallback.count
+                            self.lastRAGRetrievedTitles = keywordFallback.map {
+                                $0.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Untitled" : $0.title
+                            }
+                            self.ragStatus = .usedContext(count: keywordFallback.count)
+                        }
                     } else {
                         var foundContext: [Note] = []
                         var vectorError: String? = nil
@@ -337,7 +354,7 @@ class GlobalViewModel {
                         if foundContext.isEmpty {
                             foundContext = vectorSearchService.findKeywordMatches(
                                 queryText: userMessageText,
-                                notes: eligibleNotes,
+                                notes: notes,
                                 topK: 3
                             )
                         }
@@ -345,6 +362,9 @@ class GlobalViewModel {
                         ragContext = foundContext
                         self.retrievedContext = foundContext
                         self.lastRAGRetrievedCount = foundContext.count
+                        self.lastRAGRetrievedTitles = foundContext.map {
+                            $0.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Untitled" : $0.title
+                        }
                         if foundContext.isEmpty, let vectorError {
                             self.ragStatus = .failed(vectorError)
                         } else {
@@ -425,7 +445,11 @@ class GlobalViewModel {
         if lastRAGPreparedNotesCount == 0 && lastRAGEligibleNotesCount == 0 && lastRAGRetrievedCount == 0 {
             return nil
         }
-        return "RAG notes: prepared \(lastRAGPreparedNotesCount), eligible \(lastRAGEligibleNotesCount), retrieved \(lastRAGRetrievedCount)"
+        if lastRAGRetrievedTitles.isEmpty {
+            return "RAG notes: prepared \(lastRAGPreparedNotesCount), eligible \(lastRAGEligibleNotesCount), retrieved \(lastRAGRetrievedCount)"
+        }
+        let joinedTitles = lastRAGRetrievedTitles.prefix(3).joined(separator: ", ")
+        return "RAG notes: prepared \(lastRAGPreparedNotesCount), eligible \(lastRAGEligibleNotesCount), retrieved \(lastRAGRetrievedCount) [\(joinedTitles)]"
     }
 
     // MARK: - Indexing (RAG)
