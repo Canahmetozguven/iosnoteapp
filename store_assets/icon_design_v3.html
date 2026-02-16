@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html>
+<head>
+<style>
+    body { 
+        margin: 0; 
+        padding: 0; 
+        display: flex; 
+        justify-content: center; 
+        align-items: center; 
+        background: transparent;
+        height: 512px;
+        width: 512px;
+        overflow: hidden;
+    }
+    
+    .logo-container {
+        position: relative;
+        width: 460px; /* Larger */
+        height: 460px;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+    }
+
+    /* Gradient Brain/Synapse Shape - Scaled Up */
+    .synapse-shape {
+        width: 100%;
+        height: 100%;
+        filter: drop-shadow(0 10px 30px rgba(99, 102, 241, 0.6));
+    }
+
+    /* Glowing Nodes */
+    .node {
+        position: absolute;
+        border-radius: 50%;
+        background: #A5B4FC;
+        box-shadow: 0 0 25px #818CF8;
+    }
+    .n1 { width: 35px; height: 35px; top: 15%; right: 15%; }
+    .n2 { width: 25px; height: 25px; bottom: 20%; left: 10%; opacity: 0.9; }
+    .n3 { width: 30px; height: 30px; top: 30%; left: 5%; opacity: 0.7; }
+    
+</style>
+</head>
+<body>
+
+<div class="logo-container">
+    <svg class="synapse-shape" viewBox="0 0 100 100" fill="none">
+        <defs>
+            <linearGradient id="grad1" x1="0%" y1="0%" x2="100%" y2="100%">
+                <stop offset="0%" style="stop-color:#6366F1;stop-opacity:1" />
+                <stop offset="100%" style="stop-color:#A855F7;stop-opacity:1" />
+            </linearGradient>
+            <filter id="glow">
+                <feGaussianBlur stdDeviation="2.5" result="coloredBlur"/>
+                <feMerge>
+                    <feMergeNode in="coloredBlur"/>
+                    <feMergeNode in="SourceGraphic"/>
+                </feMerge>
+            </filter>
+        </defs>
+        
+        <!-- Outer Neural Ring -->
+        <circle cx="50" cy="50" r="42" stroke="url(#grad1)" stroke-width="1.5" stroke-dasharray="4 2" opacity="0.3"/>
+        
+        <!-- Main Synapse Icon -->
+        <path d="M50 15 C30 15, 15 35, 15 50 C15 75, 35 85, 50 85 C65 85, 85 75, 85 50 C85 25, 70 15, 50 15 Z M50 35 C60 35, 65 45, 65 50 C65 55, 60 65, 50 65 C40 65, 35 55, 35 50 C35 45, 40 35, 50 35 Z" 
+              fill="url(#grad1)" filter="url(#glow)"/>
+        
+        <!-- Connection Lines -->
+        <path d="M50 15 L50 5 M85 50 L95 50 M15 50 L5 50 M50 85 L50 95" stroke="url(#grad1)" stroke-width="3" stroke-linecap="round"/>
+        <path d="M75 25 L82 18 M25 75 L18 82 M25 25 L18 18 M75 75 L82 82" stroke="url(#grad1)" stroke-width="3" stroke-linecap="round"/>
+    </svg>
+    
+    <div class="node n1"></div>
+    <div class="node n2"></div>
+    <div class="node n3"></div>
+</div>
+
+</body>
+</html>

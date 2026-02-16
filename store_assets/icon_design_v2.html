@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html>
+<head>
+<style>
+    body { 
+        margin: 0; 
+        padding: 0; 
+        display: flex; 
+        justify-content: center; 
+        align-items: center; 
+        background: transparent;
+        height: 100vh;
+        width: 100vw;
+    }
+    
+    .icon-canvas {
+        width: 512px;
+        height: 512px;
+        position: relative;
+    }
+
+    /* Main Container with Deep Gradient */
+    .icon-bg {
+        width: 100%;
+        height: 100%;
+        border-radius: 110px; /* Squircle-ish */
+        background: linear-gradient(135deg, #0F172A 0%, #1E293B 50%, #0B1120 100%);
+        position: relative;
+        overflow: hidden;
+        box-shadow: 0 20px 50px rgba(0,0,0,0.5);
+        display: flex;
+        justify-content: center;
+        align-items: center;
+    }
+
+    /* Abstract Neural Mesh Background */
+    .mesh {
+        position: absolute;
+        width: 150%;
+        height: 150%;
+        background: 
+            radial-gradient(circle at 50% 50%, rgba(99, 102, 241, 0.15) 0%, transparent 50%),
+            radial-gradient(circle at 80% 20%, rgba(139, 92, 246, 0.15) 0%, transparent 40%);
+        top: -25%;
+        left: -25%;
+    }
+
+    /* The Main Logo Composition */
+    .logo-container {
+        position: relative;
+        width: 320px;
+        height: 320px;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        filter: drop-shadow(0 0 20px rgba(99, 102, 241, 0.4));
+    }
+
+    /* The "Note" Shape */
+    .note-shape {
+        position: absolute;
+        width: 240px;
+        height: 280px;
+        background: linear-gradient(160deg, rgba(255,255,255,0.1), rgba(255,255,255,0.05));
+        border-radius: 40px;
+        border: 2px solid rgba(255,255,255,0.2);
+        backdrop-filter: blur(10px);
+        transform: rotate(-5deg);
+    }
+
+    /* The "Brain/Synapse" Shape */
+    .synapse-shape {
+        position: absolute;
+        width: 180px;
+        height: 180px;
+        z-index: 2;
+    }
+
+    /* Gradient Text/Symbol */
+    .symbol {
+        font-family: sans-serif;
+        font-weight: 900;
+        font-size: 200px;
+        background: linear-gradient(to bottom right, #818CF8, #C084FC);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        transform: rotate(5deg);
+        filter: drop-shadow(0 4px 6px rgba(0,0,0,0.3));
+    }
+    
+    /* Glowing Dots/Nodes */
+    .node {
+        position: absolute;
+        border-radius: 50%;
+        background: #A5B4FC;
+        box-shadow: 0 0 15px #818CF8;
+    }
+    .n1 { width: 20px; height: 20px; top: 60px; right: 60px; }
+    .n2 { width: 12px; height: 12px; bottom: 80px; left: 50px; opacity: 0.8; }
+    .n3 { width: 16px; height: 16px; top: 120px; left: 40px; opacity: 0.6; }
+    
+    /* Connecting Lines */
+    .lines {
+        position: absolute;
+        width: 100%;
+        height: 100%;
+        top: 0; left: 0;
+    }
+
+</style>
+</head>
+<body>
+
+<div class="icon-canvas">
+    <div class="icon-bg">
+        <div class="mesh"></div>
+        
+        <div class="logo-container">
+            <!-- Glassy Note Card -->
+            <div class="note-shape"></div>
+            
+            <!-- Central Element: Abstract 'S' Synapse Brain -->
+            <svg class="synapse-shape" viewBox="0 0 100 100" fill="none">
+                <defs>
+                    <linearGradient id="grad1" x1="0%" y1="0%" x2="100%" y2="100%">
+                        <stop offset="0%" style="stop-color:#818CF8;stop-opacity:1" />
+                        <stop offset="100%" style="stop-color:#C084FC;stop-opacity:1" />
+                    </linearGradient>
+                </defs>
+                <!-- Central Brain Circuit Icon -->
+                <path d="M50 20 C30 20, 20 40, 20 50 C20 70, 35 80, 50 80 C65 80, 80 70, 80 50 C80 30, 70 20, 50 20 Z M50 35 C60 35, 65 45, 65 50 C65 55, 60 65, 50 65 C40 65, 35 55, 35 50 C35 45, 40 35, 50 35 Z" 
+                      stroke="url(#grad1)" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
+                
+                <!-- Circuit Lines -->
+                <path d="M50 20 L50 10" stroke="rgba(255,255,255,0.5)" stroke-width="4" stroke-linecap="round"/>
+                <path d="M80 50 L90 50" stroke="rgba(255,255,255,0.5)" stroke-width="4" stroke-linecap="round"/>
+                <path d="M20 50 L10 50" stroke="rgba(255,255,255,0.5)" stroke-width="4" stroke-linecap="round"/>
+                <path d="M50 80 L50 90" stroke="rgba(255,255,255,0.5)" stroke-width="4" stroke-linecap="round"/>
+            </svg>
+            
+            <div class="node n1"></div>
+            <div class="node n2"></div>
+            <div class="node n3"></div>
+        </div>
+    </div>
+</div>
+
+</body>
+</html>

@@ -1,0 +1,54 @@
+<!DOCTYPE html>
+<html>
+<head>
+<style>
+    body { margin: 0; padding: 0; display: flex; justify-content: center; align-items: center; background: transparent; }
+    .icon-container {
+        width: 512px;
+        height: 512px;
+        background: linear-gradient(135deg, #1A237E 0%, #3F51B5 100%);
+        border-radius: 100px;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        box-shadow: 0 10px 20px rgba(0,0,0,0.3);
+    }
+    .synapse {
+        width: 320px;
+        height: 320px;
+        position: relative;
+    }
+    .node {
+        position: absolute;
+        background: white;
+        border-radius: 50%;
+        box-shadow: 0 0 15px rgba(255,255,255,0.8);
+    }
+    .line {
+        position: absolute;
+        background: rgba(255,255,255,0.4);
+    }
+</style>
+</head>
+<body>
+    <div class="icon-container">
+        <svg class="synapse" viewBox="0 0 100 100">
+            <!-- Brain-like connections -->
+            <path d="M50 20 Q70 20 80 40 T70 80 Q50 90 30 80 T20 40 Q30 20 50 20" fill="none" stroke="white" stroke-width="2" stroke-dasharray="2 2" />
+            <circle cx="50" cy="50" r="12" fill="white" /> <!-- Center Mind -->
+            
+            <circle cx="30" cy="35" r="6" fill="#81D4FA" />
+            <circle cx="70" cy="35" r="6" fill="#81D4FA" />
+            <circle cx="50" cy="75" r="6" fill="#81D4FA" />
+            <circle cx="25" cy="65" r="6" fill="#81D4FA" />
+            <circle cx="75" cy="65" r="6" fill="#81D4FA" />
+
+            <line x1="50" y1="50" x2="30" y2="35" stroke="white" stroke-width="3" />
+            <line x1="50" y1="50" x2="70" y2="35" stroke="white" stroke-width="3" />
+            <line x1="50" y1="50" x2="50" y2="75" stroke="white" stroke-width="3" />
+            <line x1="50" y1="50" x2="25" y2="65" stroke="white" stroke-width="3" />
+            <line x1="50" y1="50" x2="75" y2="65" stroke="white" stroke-width="3" />
+        </svg>
+    </div>
+</body>
+</html>

@@ -1,0 +1,1 @@
+uid=1_0 RootWebArea url="file:///C:/Users/canahmet/Documents/projects/android_note_app/store_assets/icon_design_v2.html"

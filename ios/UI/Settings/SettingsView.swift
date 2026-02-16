@@ -5,6 +5,7 @@ struct SettingsView: View {
     @Environment(GlobalViewModel.self) var vm
     @Environment(\.modelContext) private var modelContext
     @Query private var notes: [Note]
+    @AppStorage(OnboardingState.completionKey) private var hasCompletedOnboarding = false
 
     @State private var showingAddCustomModel = false
     
@@ -191,6 +192,18 @@ struct SettingsView: View {
                     }
 
                     Text("Indexing is automatic. Notes are re-embedded after edits and when chat needs fresh context.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                Section("Help") {
+                    Button {
+                        hasCompletedOnboarding = false
+                    } label: {
+                        Label("Show Onboarding Again", systemImage: "list.bullet.rectangle.portrait")
+                    }
+
+                    Text("Replay the quick guide for notes, model setup, chat workflow, and backup.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }

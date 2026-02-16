@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html>
+<head>
+<style>
+    body { 
+        margin: 0; 
+        padding: 0; 
+        display: flex; 
+        justify-content: center; 
+        align-items: center; 
+        background: transparent;
+        height: 512px;
+        width: 512px;
+    }
+    
+    .icon-container {
+        width: 512px;
+        height: 512px;
+        display: flex;
+        justify-content: center;
+        align-items: center;
+    }
+
+    /* Scaling the original 108x108 viewport to 512x512 */
+    .logo-svg {
+        width: 100%;
+        height: 100%;
+        filter: drop-shadow(0 8px 15px rgba(0,0,0,0.2));
+    }
+    
+</style>
+</head>
+<body>
+
+<div class="icon-container">
+    <svg class="logo-svg" viewBox="0 0 108 108" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <!-- Connections -->
+        <path d="M54 54 L54 28 M54 54 L30 74 M54 54 L78 74" 
+              stroke="white" stroke-width="4" stroke-linecap="round"/>
+              
+        <!-- Central Node -->
+        <circle cx="54" cy="54" r="12" fill="white"/>
+        
+        <!-- Top Node -->
+        <circle cx="54" cy="22" r="6" fill="white"/>
+        
+        <!-- Bottom Left Node -->
+        <circle cx="26" cy="78" r="6" fill="white"/>
+        
+        <!-- Bottom Right Node -->
+        <circle cx="82" cy="78" r="6" fill="white"/>
+    </svg>
+</div>
+
+</body>
+</html>
