@@ -308,34 +308,47 @@ class GlobalViewModel {
                     if eligibleNotes.isEmpty {
                         self.ragStatus = .noIndexedNotes
                     } else {
+                        var foundContext: [Note] = []
+                        var vectorError: String? = nil
+
                         do {
                             let queryEmbedding = try await llamaContext.embedWithEmbeddingModel(text: userMessageText)
                             guard !queryEmbedding.isEmpty else {
-                                self.ragStatus = .failed("empty query embedding")
                                 throw LlamaError.noEmbeddings
                             }
+
                             let compatibleNotes = eligibleNotes.filter {
                                 ($0.embedding?.count ?? 0) == queryEmbedding.count
                             }
-                            guard !compatibleNotes.isEmpty else {
-                                self.ragStatus = .failed("embedding dimension mismatch")
-                                throw LlamaError.noEmbeddings
+
+                            if !compatibleNotes.isEmpty {
+                                foundContext = vectorSearchService.findSimilarNotes(
+                                    queryEmbedding: queryEmbedding,
+                                    notes: compatibleNotes,
+                                    topK: 3
+                                )
                             }
-                            let foundContext = vectorSearchService.findSimilarNotes(
-                                queryEmbedding: queryEmbedding,
-                                notes: compatibleNotes,
+                        } catch {
+                            vectorError = error.localizedDescription
+                        }
+
+                        // Fallback retrieval: if vector path returns nothing (or fails),
+                        // use keyword overlap so RAG still provides useful context.
+                        if foundContext.isEmpty {
+                            foundContext = vectorSearchService.findKeywordMatches(
+                                queryText: userMessageText,
+                                notes: eligibleNotes,
                                 topK: 3
                             )
-                            ragContext = foundContext
-                            self.retrievedContext = foundContext
-                            self.lastRAGRetrievedCount = foundContext.count
+                        }
+
+                        ragContext = foundContext
+                        self.retrievedContext = foundContext
+                        self.lastRAGRetrievedCount = foundContext.count
+                        if foundContext.isEmpty, let vectorError {
+                            self.ragStatus = .failed(vectorError)
+                        } else {
                             self.ragStatus = .usedContext(count: foundContext.count)
-                        } catch {
-                            if case .failed = self.ragStatus {
-                                // Keep specific status set above.
-                            } else {
-                                self.ragStatus = .failed(error.localizedDescription)
-                            }
                         }
                     }
                 }
@@ -629,14 +642,10 @@ class GlobalViewModel {
     private func buildMessageHistory(ragContext: [Note] = []) -> [[String: String]] {
         var messages: [[String: String]] = []
         var systemContent = "You are a helpful assistant."
+        let contextBlock = ragContextBlock(ragContext)
 
-        if !ragContext.isEmpty {
-            systemContent += "\n\nRelevant context from your notes:\n"
-            for note in ragContext {
-                let truncatedContent = String(note.content.prefix(500))
-                systemContent += "- [\(note.title)]: \(truncatedContent)\n"
-            }
-            systemContent += "\nUse the above context to help answer the user's question when relevant."
+        if !contextBlock.isEmpty {
+            systemContent += "\n\nUse retrieved notes when relevant, and prefer note-grounded answers."
         }
 
         messages.append([
@@ -644,14 +653,36 @@ class GlobalViewModel {
             "content": systemContent
         ])
 
-        for msg in chatMessages {
+        let lastIndex = chatMessages.indices.last
+
+        for (index, msg) in chatMessages.enumerated() {
+            var content = msg.content
+
+            // Inject retrieved context into the most recent user turn so templates
+            // that ignore system role still receive note context.
+            if !contextBlock.isEmpty,
+               msg.role == "user",
+               index == lastIndex {
+                content += "\n\nRetrieved note context:\n\(contextBlock)"
+            }
+
             messages.append([
                 "role": msg.role,
-                "content": msg.content
+                "content": content
             ])
         }
 
         return messages
+    }
+
+    private func ragContextBlock(_ ragContext: [Note]) -> String {
+        guard !ragContext.isEmpty else { return "" }
+
+        return ragContext.map { note in
+            let title = note.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Untitled" : note.title
+            let snippet = String(note.content.prefix(500)).trimmingCharacters(in: .whitespacesAndNewlines)
+            return "- [\(title)] \(snippet)"
+        }.joined(separator: "\n")
     }
 
     private func parseThinkTags(_ text: String) -> (content: String, thought: String?) {

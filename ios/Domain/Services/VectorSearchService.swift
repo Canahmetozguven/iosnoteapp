@@ -70,6 +70,47 @@ class VectorSearchService {
         
         return Array(topNotes)
     }
+
+    /// Fallback retrieval that does not depend on embeddings.
+    /// Uses simple token overlap scoring against note title/content.
+    func findKeywordMatches(
+        queryText: String,
+        notes: [Note],
+        topK: Int
+    ) -> [Note] {
+        guard !queryText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              !notes.isEmpty,
+              topK > 0 else {
+            return []
+        }
+
+        let queryTokens = tokenize(queryText)
+        guard !queryTokens.isEmpty else { return [] }
+
+        let scored: [(note: Note, score: Int)] = notes.compactMap { note in
+            let titleTokens = tokenize(note.title)
+            let bodyTokens = tokenize(note.content)
+            if titleTokens.isEmpty && bodyTokens.isEmpty {
+                return nil
+            }
+
+            let titleHits = queryTokens.intersection(titleTokens).count
+            let bodyHits = queryTokens.intersection(bodyTokens).count
+            let score = (titleHits * 3) + bodyHits
+            guard score > 0 else { return nil }
+            return (note: note, score: score)
+        }
+
+        return scored
+            .sorted { lhs, rhs in
+                if lhs.score == rhs.score {
+                    return lhs.note.updatedAt > rhs.note.updatedAt
+                }
+                return lhs.score > rhs.score
+            }
+            .prefix(topK)
+            .map { $0.note }
+    }
     
     // MARK: - Vector Math
     
@@ -131,5 +172,12 @@ class VectorSearchService {
             sumOfSquares += value * value
         }
         return sqrtf(sumOfSquares)
+    }
+
+    private func tokenize(_ text: String) -> Set<String> {
+        let lowered = text.lowercased()
+        let components = lowered.components(separatedBy: CharacterSet.alphanumerics.inverted)
+        let tokens = components.filter { $0.count >= 2 }
+        return Set(tokens)
     }
 }
