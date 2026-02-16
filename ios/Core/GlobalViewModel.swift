@@ -302,7 +302,7 @@ class GlobalViewModel {
         generationTask = Task { @MainActor in
             var ragContext: [Note] = []
             let keywordFallback: () -> [Note] = {
-                vectorSearchService.findKeywordMatches(
+                self.vectorSearchService.findKeywordMatches(
                     queryText: userMessageText,
                     notes: notes,
                     topK: 3
