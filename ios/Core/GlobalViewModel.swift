@@ -301,6 +301,13 @@ class GlobalViewModel {
 
         generationTask = Task { @MainActor in
             var ragContext: [Note] = []
+            let keywordFallback: () -> [Note] = {
+                vectorSearchService.findKeywordMatches(
+                    queryText: userMessageText,
+                    notes: notes,
+                    topK: 3
+                )
+            }
 
             if !notes.isEmpty {
                 let ragReady = await ensureRAGReadyBeforeSend(notes: notes, modelContext: modelContext)
@@ -308,21 +315,13 @@ class GlobalViewModel {
                     let eligibleNotes = notes.filter { isNoteEmbeddingFresh($0) }
                     self.lastRAGEligibleNotesCount = eligibleNotes.count
                     if eligibleNotes.isEmpty {
-                        let keywordFallback = vectorSearchService.findKeywordMatches(
-                            queryText: userMessageText,
-                            notes: notes,
-                            topK: 3
-                        )
-                        if keywordFallback.isEmpty {
+                        let fallbackContext = keywordFallback()
+                        if fallbackContext.isEmpty {
                             self.ragStatus = .noIndexedNotes
                         } else {
-                            ragContext = keywordFallback
-                            self.retrievedContext = keywordFallback
-                            self.lastRAGRetrievedCount = keywordFallback.count
-                            self.lastRAGRetrievedTitles = keywordFallback.map {
-                                $0.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Untitled" : $0.title
-                            }
-                            self.ragStatus = .usedContext(count: keywordFallback.count)
+                            ragContext = fallbackContext
+                            self.applyRetrievedContextMetadata(fallbackContext)
+                            self.ragStatus = .usedContext(count: fallbackContext.count)
                         }
                     } else {
                         var foundContext: [Note] = []
@@ -352,24 +351,25 @@ class GlobalViewModel {
                         // Fallback retrieval: if vector path returns nothing (or fails),
                         // use keyword overlap so RAG still provides useful context.
                         if foundContext.isEmpty {
-                            foundContext = vectorSearchService.findKeywordMatches(
-                                queryText: userMessageText,
-                                notes: notes,
-                                topK: 3
-                            )
+                            foundContext = keywordFallback()
                         }
 
                         ragContext = foundContext
-                        self.retrievedContext = foundContext
-                        self.lastRAGRetrievedCount = foundContext.count
-                        self.lastRAGRetrievedTitles = foundContext.map {
-                            $0.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Untitled" : $0.title
-                        }
+                        self.applyRetrievedContextMetadata(foundContext)
                         if foundContext.isEmpty, let vectorError {
                             self.ragStatus = .failed(vectorError)
                         } else {
                             self.ragStatus = .usedContext(count: foundContext.count)
                         }
+                    }
+                } else {
+                    // If embedding model/index readiness fails, still try keyword retrieval
+                    // so Chat can use note context instead of fully disabling RAG.
+                    let fallbackContext = keywordFallback()
+                    ragContext = fallbackContext
+                    self.applyRetrievedContextMetadata(fallbackContext)
+                    if !fallbackContext.isEmpty {
+                        self.ragStatus = .usedContext(count: fallbackContext.count)
                     }
                 }
             }
@@ -707,6 +707,14 @@ class GlobalViewModel {
             let snippet = String(note.content.prefix(500)).trimmingCharacters(in: .whitespacesAndNewlines)
             return "- [\(title)] \(snippet)"
         }.joined(separator: "\n")
+    }
+
+    private func applyRetrievedContextMetadata(_ notes: [Note]) {
+        retrievedContext = notes
+        lastRAGRetrievedCount = notes.count
+        lastRAGRetrievedTitles = notes.map {
+            $0.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Untitled" : $0.title
+        }
     }
 
     private func parseThinkTags(_ text: String) -> (content: String, thought: String?) {
