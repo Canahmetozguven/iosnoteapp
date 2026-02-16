@@ -307,12 +307,22 @@ actor LlamaContext {
     
     // MARK: - Embeddings
     
+    func embedWithEmbeddingModel(text: String) throws -> [Float] {
+        guard let context = self.contextEmbed, let model = self.modelEmbed else {
+            throw LlamaError.notLoaded
+        }
+        return try embed(text: text, context: context, model: model)
+    }
+
     func embed(text: String) throws -> [Float] {
-        // Prefer dedicated embedding context, fallback to chat context
         guard let context = self.contextEmbed ?? self.context,
               let model = self.modelEmbed ?? self.model else {
             throw LlamaError.notLoaded
         }
+        return try embed(text: text, context: context, model: model)
+    }
+
+    private func embed(text: String, context: OpaquePointer, model: OpaquePointer) throws -> [Float] {
         
         let tokens = try tokenize(text: text, context: context, model: model, addSpecial: true)
         let n_tokens = Int32(tokens.count)
@@ -341,8 +351,6 @@ actor LlamaContext {
             }
         }
         
-        // Retrieve embeddings
-        // llama_get_embeddings returns pointer to float array of size n_embd
         guard let embeddingPtr = llama_get_embeddings(context) else {
             throw LlamaError.noEmbeddings
         }

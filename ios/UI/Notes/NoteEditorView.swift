@@ -2,6 +2,8 @@ import SwiftUI
 import SwiftData
 
 struct NoteEditorView: View {
+    @Environment(GlobalViewModel.self) private var vm
+    @Environment(\.modelContext) private var modelContext
     @Bindable var note: Note
     
     var body: some View {
@@ -21,9 +23,11 @@ struct NoteEditorView: View {
         .background(Color(.systemBackground))
         .onChange(of: note.title) { _ in
             note.updatedAt = Date()
+            vm.handleNoteEdited(note, modelContext: modelContext)
         }
         .onChange(of: note.content) { _ in
             note.updatedAt = Date()
+            vm.handleNoteEdited(note, modelContext: modelContext)
         }
     }
 }

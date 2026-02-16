@@ -89,6 +89,12 @@ struct SettingsView: View {
                         Text(vm.displayName(for: vm.currentEmbeddingModelId))
                             .foregroundStyle(.secondary)
                     }
+                    HStack {
+                        Text("Chats")
+                        Spacer()
+                        Text("\(vm.sessions.count)")
+                            .foregroundStyle(.secondary)
+                    }
                     if let error = vm.modelError {
                         Text("Error: \(error)")
                             .foregroundStyle(AppTheme.redError)
@@ -112,6 +118,7 @@ struct SettingsView: View {
                                 onGet: { vm.startDownload(item) },
                                 onCancel: { vm.cancelDownload(modelId: item.id) },
                                 onLoad: { vm.loadChatModel(item: item) },
+                                onReload: { vm.reloadChatModel(item: item) },
                                 onDelete: { vm.deleteDownloaded(item) }
                             )
                         }
@@ -134,6 +141,7 @@ struct SettingsView: View {
                                 onGet: { vm.startDownload(item) },
                                 onCancel: { vm.cancelDownload(modelId: item.id) },
                                 onLoad: { vm.loadEmbeddingModel(item: item) },
+                                onReload: { vm.reloadEmbeddingModel(item: item) },
                                 onDelete: { vm.deleteDownloaded(item) }
                             )
                         }
@@ -163,10 +171,10 @@ struct SettingsView: View {
                 }
                 
                 Section("RAG Indexing") {
-                    let indexedCount = notes.filter { $0.embedding != nil }.count
+                    let indexedCount = vm.indexedCountForActiveEmbedding(notes: notes)
                     
                     HStack {
-                        Text("Notes")
+                        Text("Fresh embeddings")
                         Spacer()
                         Text("\(indexedCount)/\(notes.count) indexed")
                             .foregroundStyle(.secondary)
@@ -183,7 +191,7 @@ struct SettingsView: View {
                     }
                     
                     Button {
-                        vm.indexAllNotes(notes: notes)
+                        vm.indexAllNotes(notes: notes, modelContext: modelContext)
                     } label: {
                         HStack {
                             Image(systemName: "arrow.trianglehead.2.clockwise.rotate.90")
@@ -199,6 +207,9 @@ struct SettingsView: View {
                 
             }
             .navigationTitle("Settings")
+            .onAppear {
+                vm.bootstrapIfNeeded(modelContext: modelContext)
+            }
             .sheet(isPresented: $showingAddCustomModel) {
                 AddCustomModelSheet(vm: vm)
             }
@@ -216,6 +227,7 @@ private struct ModelRow: View {
     let onGet: () -> Void
     let onCancel: () -> Void
     let onLoad: () -> Void
+    let onReload: () -> Void
     let onDelete: () -> Void
 
     var body: some View {
@@ -233,11 +245,13 @@ private struct ModelRow: View {
             Spacer()
 
             if isActive {
-                if isBusy {
-                    ProgressView()
-                } else {
+                HStack(spacing: 8) {
                     Image(systemName: "checkmark.circle.fill")
                         .foregroundStyle(AppTheme.greenSuccess)
+
+                    Button("Reload") { onReload() }
+                        .buttonStyle(.bordered)
+                        .disabled(isBusy)
                 }
             } else {
                 actionView
@@ -284,9 +298,15 @@ private struct ModelRow: View {
 
         case .completed, .notStarted:
             if isInstalled {
-                Button("Load Model") { onLoad() }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(isBusy)
+                HStack(spacing: 8) {
+                    Button("Load") { onLoad() }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(isBusy)
+
+                    Button("Reload") { onReload() }
+                        .buttonStyle(.bordered)
+                        .disabled(isBusy)
+                }
             } else {
                 Button("Get") { onGet() }
                     .buttonStyle(.bordered)

@@ -12,13 +12,18 @@ struct LlmNotesApp: App {
 
     var sharedModelContainer: ModelContainer = {
         let schema = Schema([
-            SchemaV1.Note.self,
-            SchemaV1.ChatMessage.self
+            SchemaV2.Note.self,
+            SchemaV2.ChatSession.self,
+            SchemaV2.ChatMessage.self
         ])
         let modelConfiguration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
 
         do {
-            return try ModelContainer(for: schema, configurations: [modelConfiguration])
+            return try ModelContainer(
+                for: schema,
+                migrationPlan: AppSchemaMigrationPlan.self,
+                configurations: [modelConfiguration]
+            )
         } catch {
             fatalError("Could not create ModelContainer: \(error)")
         }

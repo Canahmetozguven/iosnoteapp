@@ -14,10 +14,11 @@ enum BackupError: Error {
 final class BackupExporter {
     func exportZip(modelContext: ModelContext) throws -> URL {
         let notes = try modelContext.fetch(FetchDescriptor<Note>())
+        let sessions = try modelContext.fetch(FetchDescriptor<ChatSession>())
         let messages = try modelContext.fetch(FetchDescriptor<ChatMessage>())
 
         let payload = ExportPayloadV1(
-            version: 1,
+            version: 2,
             exportedAt: Date(),
             notes: notes.map { n in
                 ExportNoteV1(
@@ -27,7 +28,18 @@ final class BackupExporter {
                     createdAt: n.createdAt,
                     updatedAt: n.updatedAt,
                     tags: n.tags,
-                    embedding: n.embedding
+                    embedding: n.embedding,
+                    embeddingModelId: n.embeddingModelId,
+                    embeddingUpdatedAt: n.embeddingUpdatedAt,
+                    embeddingContentHash: n.embeddingContentHash
+                )
+            },
+            chatSessions: sessions.map { s in
+                ExportChatSessionV1(
+                    id: s.id,
+                    title: s.title,
+                    createdAt: s.createdAt,
+                    updatedAt: s.updatedAt
                 )
             },
             chatMessages: messages.map { m in
@@ -37,15 +49,17 @@ final class BackupExporter {
                     content: m.content,
                     thoughtProcess: m.thoughtProcess,
                     sourceNoteIds: m.sourceNoteIds,
-                    createdAt: m.createdAt
+                    createdAt: m.createdAt,
+                    sessionId: m.session?.id
                 )
             }
         )
 
         let manifest = ExportManifestV1(
-            version: 1,
+            version: 2,
             createdAt: Date(),
             noteCount: notes.count,
+            chatSessionCount: sessions.count,
             chatMessageCount: messages.count,
             appVersion: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String
         )
@@ -108,4 +122,3 @@ final class BackupExporter {
         #endif
     }
 }
-

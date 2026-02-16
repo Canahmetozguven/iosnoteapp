@@ -46,17 +46,44 @@ final class BackupImporter {
                 createdAt: n.createdAt,
                 updatedAt: n.updatedAt,
                 tags: n.tags,
-                embedding: n.embedding
+                embedding: n.embedding,
+                embeddingModelId: n.embeddingModelId,
+                embeddingUpdatedAt: n.embeddingUpdatedAt,
+                embeddingContentHash: n.embeddingContentHash
             ))
         }
+
+        var sessionsById: [UUID: ChatSession] = [:]
+        if let exportedSessions = payload.chatSessions, !exportedSessions.isEmpty {
+            for s in exportedSessions {
+                let session = ChatSession(
+                    id: s.id,
+                    title: s.title,
+                    createdAt: s.createdAt,
+                    updatedAt: s.updatedAt
+                )
+                modelContext.insert(session)
+                sessionsById[s.id] = session
+            }
+        }
+
+        var fallbackSession: ChatSession? = sessionsById.values.first
+        if !payload.chatMessages.isEmpty && sessionsById.isEmpty {
+            let legacy = ChatSession(title: "Legacy Chat")
+            modelContext.insert(legacy)
+            fallbackSession = legacy
+        }
+
         for m in payload.chatMessages {
+            let session = m.sessionId.flatMap { sessionsById[$0] } ?? fallbackSession
             modelContext.insert(ChatMessage(
                 id: m.id,
                 role: m.role,
                 content: m.content,
                 thoughtProcess: m.thoughtProcess,
                 sourceNoteIds: m.sourceNoteIds,
-                createdAt: m.createdAt
+                createdAt: m.createdAt,
+                session: session
             ))
         }
 
@@ -89,4 +116,3 @@ final class BackupImporter {
         }
     }
 }
-

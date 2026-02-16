@@ -2,83 +2,234 @@ import SwiftUI
 import SwiftData
 
 struct ChatView: View {
-    @Environment(GlobalViewModel.self) var vm
+    @Environment(GlobalViewModel.self) private var vm
+    @Environment(\.modelContext) private var modelContext
     @Query private var notes: [Note]
-    @State private var inputText: String = ""
-    
+
+    @State private var inputText = ""
+    @State private var showingSessionSheet = false
+
     var body: some View {
-        VStack {
+        VStack(spacing: 0) {
+            if let ragStatusText = vm.ragStatusText() {
+                Text(ragStatusText)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 8)
+                    .background(AppTheme.surfaceLight)
+            }
+
             if !vm.isChatModelLoaded {
-                VStack(spacing: 16) {
-                    Image(systemName: "exclamationmark.triangle")
-                        .font(.largeTitle)
-                        .foregroundStyle(.orange)
-                    Text("Model not loaded")
-                        .font(.headline)
-                    Text("Please go to Settings, download a chat model, and tap Load Model.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                .frame(maxHeight: .infinity)
+                unloadedModelState
             } else {
-                ScrollViewReader { proxy in
-                    ScrollView {
-                        LazyVStack(spacing: 12) {
-                            ForEach(vm.chatMessages, id: \.id) { msg in
-                                MessageBubble(message: msg)
-                                    .id(msg.id)
-                            }
-                        }
-                        .padding()
-                    }
-                    .onChange(of: vm.chatMessages.count) {
-                        if let lastId = vm.chatMessages.last?.id {
-                            withAnimation {
-                                proxy.scrollTo(lastId, anchor: .bottom)
-                            }
-                        }
-                    }
-                    // Auto-scroll for streaming updates
-                    .onChange(of: vm.chatMessages.last?.content) {
-                        if let lastId = vm.chatMessages.last?.id {
-                            proxy.scrollTo(lastId, anchor: .bottom)
-                        }
-                    }
-                }
-                
-                HStack {
-                    TextField("Type a message...", text: $inputText)
-                        .textFieldStyle(.roundedBorder)
-                        .disabled(vm.isBusy && vm.chatMessages.last?.role == "assistant") // Disable only if generating
-                    
-                    if vm.isBusy && vm.chatMessages.last?.role == "assistant" {
-                         Button(action: {
-                             vm.stopGeneration()
-                         }) {
-                             Image(systemName: "stop.circle.fill")
-                                 .font(.title2)
-                                 .foregroundStyle(.red)
-                         }
-                    } else {
-                        Button(action: sendMessage) {
-                            Image(systemName: "arrow.up.circle.fill")
-                                .font(.title2)
-                        }
-                        .disabled(inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                    }
-                }
-                .padding()
-                .background(.regularMaterial)
+                messagesArea
+                composer
             }
         }
-        .navigationTitle("Chat")
+        .background(AppTheme.backgroundLight.ignoresSafeArea())
+        .navigationTitle(vm.activeSession()?.title ?? "Chat")
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarLeading) {
+                Button {
+                    showingSessionSheet = true
+                } label: {
+                    Image(systemName: "text.bubble")
+                }
+            }
+
+            ToolbarItem(placement: .topBarTrailing) {
+                Button {
+                    vm.createNewChatSession(modelContext: modelContext)
+                } label: {
+                    Image(systemName: "square.and.pencil")
+                }
+            }
+        }
+        .sheet(isPresented: $showingSessionSheet) {
+            ChatSessionsSheet(
+                vm: vm,
+                modelContext: modelContext
+            )
+            .presentationDetents([.medium, .large])
+        }
+        .onAppear {
+            vm.bootstrapIfNeeded(modelContext: modelContext)
+        }
     }
-    
-    func sendMessage() {
+
+    private var unloadedModelState: some View {
+        VStack(spacing: 14) {
+            Image(systemName: "cpu")
+                .font(.system(size: 32, weight: .semibold))
+                .foregroundStyle(AppTheme.primary)
+            Text("Chat model is not loaded")
+                .font(.headline)
+            Text("Open Settings, download a chat model, and load it.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+        }
+        .padding(24)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private var messagesArea: some View {
+        ScrollViewReader { proxy in
+            ScrollView {
+                LazyVStack(spacing: 12) {
+                    ForEach(vm.chatMessages, id: \.id) { msg in
+                        MessageBubble(message: msg)
+                            .id(msg.id)
+                    }
+                }
+                .padding(.horizontal, 12)
+                .padding(.top, 10)
+                .padding(.bottom, 4)
+            }
+            .onChange(of: vm.chatMessages.count) {
+                if let lastId = vm.chatMessages.last?.id {
+                    withAnimation {
+                        proxy.scrollTo(lastId, anchor: .bottom)
+                    }
+                }
+            }
+            .onChange(of: vm.chatMessages.last?.content) {
+                if let lastId = vm.chatMessages.last?.id {
+                    proxy.scrollTo(lastId, anchor: .bottom)
+                }
+            }
+        }
+    }
+
+    private var composer: some View {
+        HStack(alignment: .bottom, spacing: 10) {
+            TextField("Ask anything...", text: $inputText, axis: .vertical)
+                .textFieldStyle(.plain)
+                .lineLimit(1...4)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 10)
+                .background(Color.white)
+                .clipShape(RoundedRectangle(cornerRadius: 14))
+                .disabled(vm.isGenerating)
+
+            if vm.isGenerating {
+                Button {
+                    vm.stopGeneration()
+                } label: {
+                    Image(systemName: "stop.fill")
+                        .font(.system(size: 16, weight: .bold))
+                        .frame(width: 42, height: 42)
+                        .background(AppTheme.redError.opacity(0.15))
+                        .foregroundStyle(AppTheme.redError)
+                        .clipShape(Circle())
+                }
+            } else {
+                Button(action: sendMessage) {
+                    Image(systemName: "arrow.up")
+                        .font(.system(size: 16, weight: .bold))
+                        .frame(width: 42, height: 42)
+                        .background(AppTheme.primary)
+                        .foregroundStyle(.white)
+                        .clipShape(Circle())
+                }
+                .disabled(inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(AppTheme.surfaceLight)
+    }
+
+    private func sendMessage() {
         let text = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
         inputText = ""
-        vm.sendMessage(text: text, notes: notes)
+        vm.sendMessage(text: text, notes: notes, modelContext: modelContext)
+    }
+}
+
+private struct ChatSessionsSheet: View {
+    let vm: GlobalViewModel
+    let modelContext: ModelContext
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var renameSession: ChatSession?
+    @State private var renameText = ""
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section {
+                    Button {
+                        vm.createNewChatSession(modelContext: modelContext)
+                        dismiss()
+                    } label: {
+                        Label("New Chat", systemImage: "plus.bubble")
+                    }
+                }
+
+                Section("Previous Chats") {
+                    ForEach(vm.sessions, id: \.id) { session in
+                        Button {
+                            vm.selectSession(session, modelContext: modelContext)
+                            dismiss()
+                        } label: {
+                            HStack {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(session.title)
+                                        .lineLimit(1)
+                                    Text(session.updatedAt.formatted(date: .abbreviated, time: .shortened))
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                                Spacer()
+                                if vm.activeSessionId == session.id {
+                                    Image(systemName: "checkmark.circle.fill")
+                                        .foregroundStyle(AppTheme.greenSuccess)
+                                }
+                            }
+                        }
+                        .buttonStyle(.plain)
+                        .swipeActions(edge: .trailing, allowsFullSwipe: false) {
+                            Button("Rename") {
+                                renameSession = session
+                                renameText = session.title
+                            }
+                            .tint(AppTheme.primary)
+
+                            Button("Delete", role: .destructive) {
+                                vm.deleteChatSession(session, modelContext: modelContext)
+                            }
+                        }
+                    }
+                }
+            }
+            .navigationTitle("Chats")
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Done") {
+                        dismiss()
+                    }
+                }
+            }
+            .alert("Rename Chat", isPresented: Binding(
+                get: { renameSession != nil },
+                set: { if !$0 { renameSession = nil } }
+            )) {
+                TextField("Title", text: $renameText)
+                Button("Cancel", role: .cancel) {
+                    renameSession = nil
+                }
+                Button("Save") {
+                    if let target = renameSession {
+                        vm.renameChatSession(target, title: renameText, modelContext: modelContext)
+                    }
+                    renameSession = nil
+                }
+            }
+        }
     }
 }

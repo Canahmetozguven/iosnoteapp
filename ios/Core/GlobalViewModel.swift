@@ -1,6 +1,7 @@
 import Foundation
 import SwiftUI
 import SwiftData
+import CryptoKit
 
 @MainActor
 @Observable
@@ -11,28 +12,52 @@ class GlobalViewModel {
     let driveSync = DriveSyncService()
     var llamaContext = LlamaContext()
     let vectorSearchService = VectorSearchService()
-    
+
     private enum PreferenceKey {
         static let activeChatModelId = "active_chat_model_id"
         static let activeEmbeddingModelId = "active_embedding_model_id"
         static let lowPowerMode = "low_power_mode"
+        static let activeChatSessionId = "active_chat_session_id"
     }
+
+    private enum SessionDefaults {
+        static let legacyTitle = "Legacy Chat"
+        static let newChatTitle = "New Chat"
+    }
+
+    enum RAGStatus: Equatable {
+        case ready
+        case disabledNoEmbeddingModel
+        case noIndexedNotes
+        case usedContext(count: Int)
+        case failed(String)
+    }
+
     private let defaults = UserDefaults.standard
 
-    var isChatModelLoaded: Bool = false
-    var isEmbeddingModelLoaded: Bool = false
+    var isChatModelLoaded = false
+    var isEmbeddingModelLoaded = false
+    var isChatModelLoading = false
+    var isEmbeddingModelLoading = false
+    var isGenerating = false
+    var isIndexing = false
+
+    var isBusy: Bool {
+        isChatModelLoading || isEmbeddingModelLoading || isGenerating || isIndexing
+    }
 
     var currentChatModelId: String? = nil
     var currentEmbeddingModelId: String? = nil
 
     var modelError: String? = nil
-    var isBusy: Bool = false
+    var ragStatus: RAGStatus = .ready
+    var retrievedContext: [Note] = []
 
-    func displayName(for modelId: String?) -> String {
-        guard let modelId else { return "None" }
-        return catalogStore.items.first(where: { $0.id == modelId })?.name ?? modelId
-    }
-    
+    // Chat state (session-aware and persisted in SwiftData).
+    var sessions: [ChatSession] = []
+    var activeSessionId: UUID? = nil
+    var chatMessages: [ChatMessage] = []
+
     // Defaults:
     // - Simulator: true (no practical Metal acceleration for this app flow)
     // - Physical devices: false (prefer GPU/Metal)
@@ -41,12 +66,15 @@ class GlobalViewModel {
             defaults.set(isLowPowerMode, forKey: PreferenceKey.lowPowerMode)
         }
     }
-    
-    // Chat state
-    var chatMessages: [ChatMessage] = [] // In-memory for current session, or fetch from DB
-    
-    // Track current generation task for cancellation
+
+    // Progress for indexing (0.0 to 1.0)
+    var indexingProgress: Double = 0.0
+    var indexingStatus: String? = nil
+
+    private var hasBootstrappedData = false
+    private var isModelRehydrateInProgress = false
     private var generationTask: Task<Void, Never>?
+    private var pendingAutoIndexTasks: [UUID: Task<Void, Never>] = [:]
 
     init() {
         if defaults.object(forKey: PreferenceKey.lowPowerMode) != nil {
@@ -61,8 +89,84 @@ class GlobalViewModel {
         }
         currentChatModelId = defaults.string(forKey: PreferenceKey.activeChatModelId)
         currentEmbeddingModelId = defaults.string(forKey: PreferenceKey.activeEmbeddingModelId)
+        if let rawSessionId = defaults.string(forKey: PreferenceKey.activeChatSessionId) {
+            activeSessionId = UUID(uuidString: rawSessionId)
+        }
     }
-    
+
+    // MARK: - Bootstrap and Session Management
+
+    func bootstrapIfNeeded(modelContext: ModelContext) {
+        guard !hasBootstrappedData else { return }
+        hasBootstrappedData = true
+
+        do {
+            try migrateUngroupedMessagesIntoLegacySession(modelContext: modelContext)
+            try ensureAtLeastOneSession(modelContext: modelContext)
+            try refreshSessions(modelContext: modelContext)
+            if let selected = restoreSelectedSession() {
+                selectSession(selected, modelContext: modelContext)
+            } else if let first = sessions.first {
+                selectSession(first, modelContext: modelContext)
+            }
+        } catch {
+            modelError = "Failed to bootstrap chat history: \(error.localizedDescription)"
+        }
+    }
+
+    func createNewChatSession(modelContext: ModelContext) {
+        let session = ChatSession(title: SessionDefaults.newChatTitle)
+        modelContext.insert(session)
+        try? modelContext.save()
+        try? refreshSessions(modelContext: modelContext)
+        selectSession(session, modelContext: modelContext)
+    }
+
+    func renameChatSession(_ session: ChatSession, title: String, modelContext: ModelContext) {
+        let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        session.title = trimmed
+        session.updatedAt = Date()
+        try? modelContext.save()
+        try? refreshSessions(modelContext: modelContext)
+    }
+
+    func deleteChatSession(_ session: ChatSession, modelContext: ModelContext) {
+        if activeSessionId == session.id {
+            stopGeneration()
+        }
+
+        modelContext.delete(session)
+        try? modelContext.save()
+        try? refreshSessions(modelContext: modelContext)
+
+        if sessions.isEmpty {
+            createNewChatSession(modelContext: modelContext)
+            return
+        }
+
+        if activeSessionId == session.id, let first = sessions.first {
+            selectSession(first, modelContext: modelContext)
+        }
+    }
+
+    func selectSession(_ session: ChatSession, modelContext: ModelContext) {
+        activeSessionId = session.id
+        defaults.set(session.id.uuidString, forKey: PreferenceKey.activeChatSessionId)
+        loadMessages(for: session, modelContext: modelContext)
+    }
+
+    func activeSession() -> ChatSession? {
+        sessions.first(where: { $0.id == activeSessionId })
+    }
+
+    // MARK: - Model Handling
+
+    func displayName(for modelId: String?) -> String {
+        guard let modelId else { return "None" }
+        return catalogStore.items.first(where: { $0.id == modelId })?.name ?? modelId
+    }
+
     func isInstalled(_ item: ModelCatalogItem) -> Bool {
         ModelStorage.shared.exists(item)
     }
@@ -77,7 +181,6 @@ class GlobalViewModel {
 
     func deleteDownloaded(_ item: ModelCatalogItem) {
         do {
-            // If deleting active model, unload it first.
             if currentChatModelId == item.id { unloadChatModel() }
             if currentEmbeddingModelId == item.id { unloadEmbeddingModel() }
             try downloadManager.deleteDownloaded(item)
@@ -87,95 +190,64 @@ class GlobalViewModel {
     }
 
     func loadChatModel(item: ModelCatalogItem) {
-        guard item.kind == .chat else { return }
-        guard let path = modelPathIfInstalled(item) else {
-            modelError = "Model file not found"
-            return
-        }
-        
-        isBusy = true
-        modelError = nil
-        
-        Task {
-            do {
-                // Pass low power mode flag
-                try await llamaContext.loadModel(path: path, lowMemory: isLowPowerMode)
-                
-                await MainActor.run {
-                    self.isChatModelLoaded = true
-                    self.currentChatModelId = item.id
-                    self.defaults.set(item.id, forKey: PreferenceKey.activeChatModelId)
-                    self.isBusy = false
-                }
-            } catch {
-                await MainActor.run {
-                    self.modelError = error.localizedDescription
-                    self.isChatModelLoaded = false
-                    self.isBusy = false
-                }
-            }
+        Task { @MainActor in
+            await loadChatModelAsync(item: item, persistSelection: true)
         }
     }
 
     func loadEmbeddingModel(item: ModelCatalogItem) {
-        guard item.kind == .embedding else { return }
-        guard let path = modelPathIfInstalled(item) else {
-            modelError = "Model file not found"
-            return
+        Task { @MainActor in
+            await loadEmbeddingModelAsync(item: item, persistSelection: true)
         }
+    }
 
-        isBusy = true
-        modelError = nil
+    func reloadChatModel(item: ModelCatalogItem) {
+        Task { @MainActor in
+            await unloadChatModelAsync(clearSelection: false)
+            await loadChatModelAsync(item: item, persistSelection: true)
+        }
+    }
 
-        Task {
-            do {
-                try await llamaContext.loadEmbeddingModel(path: path, lowMemory: isLowPowerMode)
-                await MainActor.run {
-                    self.isEmbeddingModelLoaded = true
-                    self.currentEmbeddingModelId = item.id
-                    self.defaults.set(item.id, forKey: PreferenceKey.activeEmbeddingModelId)
-                    self.isBusy = false
-                }
-            } catch {
-                await MainActor.run {
-                    self.modelError = error.localizedDescription
-                    self.isEmbeddingModelLoaded = false
-                    self.isBusy = false
-                }
-            }
+    func reloadEmbeddingModel(item: ModelCatalogItem) {
+        Task { @MainActor in
+            await unloadEmbeddingModelAsync(clearSelection: false)
+            await loadEmbeddingModelAsync(item: item, persistSelection: true)
         }
     }
 
     func unloadChatModel() {
-        Task {
-            await llamaContext.unloadChat()
-            await MainActor.run {
-                self.isChatModelLoaded = false
-                self.currentChatModelId = nil
-                self.defaults.removeObject(forKey: PreferenceKey.activeChatModelId)
-            }
+        Task { @MainActor in
+            await unloadChatModelAsync(clearSelection: true)
         }
     }
 
     func unloadEmbeddingModel() {
-        Task {
-            await llamaContext.unloadEmbedding()
-            await MainActor.run {
-                self.isEmbeddingModelLoaded = false
-                self.currentEmbeddingModelId = nil
-                self.defaults.removeObject(forKey: PreferenceKey.activeEmbeddingModelId)
-            }
+        Task { @MainActor in
+            await unloadEmbeddingModelAsync(clearSelection: true)
         }
     }
 
     func handleSceneDidBecomeActive() {
         downloadManager.restorePendingTasks()
 
-        if !isBusy, !isChatModelLoaded, let id = currentChatModelId, let item = findItem(id: id), modelPathIfInstalled(item) != nil {
-            loadChatModel(item: item)
-        }
-        if !isBusy, !isEmbeddingModelLoaded, let id = currentEmbeddingModelId, let item = findItem(id: id), modelPathIfInstalled(item) != nil {
-            loadEmbeddingModel(item: item)
+        Task { @MainActor in
+            guard !isModelRehydrateInProgress else { return }
+            isModelRehydrateInProgress = true
+            defer { isModelRehydrateInProgress = false }
+
+            if !isChatModelLoaded,
+               let id = currentChatModelId,
+               let item = findItem(id: id),
+               modelPathIfInstalled(item) != nil {
+                await loadChatModelAsync(item: item, persistSelection: false)
+            }
+
+            if !isEmbeddingModelLoaded,
+               let id = currentEmbeddingModelId,
+               let item = findItem(id: id),
+               modelPathIfInstalled(item) != nil {
+                await loadEmbeddingModelAsync(item: item, persistSelection: false)
+            }
         }
     }
 
@@ -186,167 +258,268 @@ class GlobalViewModel {
         }
         isChatModelLoaded = false
         isEmbeddingModelLoaded = false
-        isBusy = false
+        isChatModelLoading = false
+        isEmbeddingModelLoading = false
     }
-    
+
     // MARK: - Chat
-    
-    /// RAG context retrieved for the current query (for UI display if needed)
-    var retrievedContext: [Note] = []
-    
-    func sendMessage(text: String, notes: [Note] = []) {
-        guard isChatModelLoaded, !isBusy else { return }
-        
-        // Create and append user message
-        let userMessage = ChatMessage(role: "user", content: text)
+
+    func sendMessage(text: String, notes: [Note] = [], modelContext: ModelContext) {
+        guard isChatModelLoaded, !isGenerating else { return }
+        bootstrapIfNeeded(modelContext: modelContext)
+
+        guard let session = ensureActiveSession(modelContext: modelContext) else { return }
+
+        let userMessageText = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !userMessageText.isEmpty else { return }
+
+        let shouldAutoTitle = chatMessages.isEmpty && session.title == SessionDefaults.newChatTitle
+        if shouldAutoTitle {
+            session.title = autoTitle(from: userMessageText)
+        }
+        session.updatedAt = Date()
+
+        let userMessage = ChatMessage(role: "user", content: userMessageText, session: session)
+        modelContext.insert(userMessage)
         chatMessages.append(userMessage)
-        
-        isBusy = true
+        try? modelContext.save()
+
+        isGenerating = true
+        ragStatus = .ready
         retrievedContext = []
-        
-        generationTask = Task {
-            // RAG: Find relevant notes if available
+
+        generationTask = Task { @MainActor in
             var ragContext: [Note] = []
-            if !notes.isEmpty {
-                do {
-                    let queryEmbedding = try await llamaContext.embed(text: text)
-                    if !queryEmbedding.isEmpty {
+
+            if isEmbeddingModelLoaded {
+                let eligibleNotes = notes.filter { isNoteEmbeddingFresh($0) }
+                if eligibleNotes.isEmpty {
+                    self.ragStatus = .noIndexedNotes
+                } else {
+                    do {
+                        let queryEmbedding = try await llamaContext.embedWithEmbeddingModel(text: userMessageText)
                         let foundContext = vectorSearchService.findSimilarNotes(
                             queryEmbedding: queryEmbedding,
-                            notes: notes,
+                            notes: eligibleNotes,
                             topK: 3
                         )
                         ragContext = foundContext
-                        await MainActor.run {
-                            self.retrievedContext = foundContext
-                        }
+                        self.retrievedContext = foundContext
+                        self.ragStatus = .usedContext(count: foundContext.count)
+                    } catch {
+                        self.ragStatus = .failed(error.localizedDescription)
                     }
-                } catch {
-                    print("RAG embedding failed: \(error.localizedDescription)")
-                    // Continue without RAG context
                 }
+            } else {
+                self.ragStatus = .disabledNoEmbeddingModel
             }
-            
-            // Build prompt using chat template with RAG context
-            let messages = buildMessageHistory(ragContext: ragContext, userQuery: text)
+
+            let messages = buildMessageHistory(ragContext: ragContext)
             let prompt = await llamaContext.applyTemplate(messages: messages)
-            
-            // Create assistant message placeholder
+
             let sourceNoteIds = ragContext.map { $0.id }
-            let assistantMessage = ChatMessage(role: "assistant", content: "", sourceNoteIds: sourceNoteIds)
-            await MainActor.run {
-                chatMessages.append(assistantMessage)
-            }
-            
+            let assistantMessage = ChatMessage(
+                role: "assistant",
+                content: "",
+                sourceNoteIds: sourceNoteIds,
+                session: session
+            )
+            modelContext.insert(assistantMessage)
+            chatMessages.append(assistantMessage)
+
             var fullResponse = ""
-            
+
             do {
                 let stream = await llamaContext.completion(prompt: prompt)
-                
                 for try await token in stream {
                     if Task.isCancelled { break }
-                    
                     fullResponse += token
-                    let responseSnapshot = fullResponse
-                     
-                    // Parse and update the message on main thread
-                    await MainActor.run {
-                        let parsed = parseThinkTags(responseSnapshot)
-                        assistantMessage.content = parsed.content
-                        assistantMessage.thoughtProcess = parsed.thought
-                    }
+                    let snapshot = fullResponse
+                    let parsed = parseThinkTags(snapshot)
+                    assistantMessage.content = parsed.content
+                    assistantMessage.thoughtProcess = parsed.thought
+                    session.updatedAt = Date()
                 }
             } catch {
-                await MainActor.run {
-                    assistantMessage.content = "Error: \(error.localizedDescription)"
-                }
+                assistantMessage.content = "Error: \(error.localizedDescription)"
+                session.updatedAt = Date()
             }
-            
-            await MainActor.run {
-                self.isBusy = false
-            }
+
+            try? modelContext.save()
+            try? refreshSessions(modelContext: modelContext)
+            self.isGenerating = false
         }
     }
-    
+
     func stopGeneration() {
         generationTask?.cancel()
+        generationTask = nil
         Task {
             await llamaContext.stopCompletion()
         }
-        isBusy = false
+        isGenerating = false
     }
-    
+
+    func ragStatusText() -> String? {
+        switch ragStatus {
+        case .ready:
+            return nil
+        case .disabledNoEmbeddingModel:
+            return "RAG is disabled: load an embedding model."
+        case .noIndexedNotes:
+            return "No indexed notes for the active embedding model."
+        case .usedContext(let count):
+            return count > 0 ? "RAG: using \(count) note(s) as context." : "RAG: no relevant notes found."
+        case .failed(let message):
+            return "RAG failed: \(message)"
+        }
+    }
+
     // MARK: - Indexing (RAG)
-    
-    /// Progress for indexing (0.0 to 1.0)
-    var indexingProgress: Double = 0.0
-    var indexingStatus: String? = nil
-    
-    /// Index all notes by generating embeddings.
-    /// Updates note.embedding directly (Note is a class, SwiftData persists changes).
-    func indexAllNotes(notes: [Note]) {
-        guard isEmbeddingModelLoaded, !isBusy else { return }
-        
-        isBusy = true
+
+    func indexAllNotes(notes: [Note], modelContext: ModelContext) {
+        guard isEmbeddingModelLoaded, !isIndexing else { return }
+        guard !notes.isEmpty else { return }
+
+        isIndexing = true
         indexingProgress = 0.0
         indexingStatus = "Starting indexing..."
-        
-        Task {
+
+        Task { @MainActor in
             let total = notes.count
             var indexed = 0
             var failed = 0
-            
+
             for note in notes {
                 do {
-                    let textToEmbed = "\(note.title)\n\(note.content)"
-                    let embedding = try await llamaContext.embed(text: textToEmbed)
-                    
-                    // Update the note's embedding (Note is a class, mutation persists)
-                    await MainActor.run {
-                        note.embedding = embedding
-                    }
+                    try await indexSingleNote(note: note, modelContext: modelContext)
                     indexed += 1
                 } catch {
-                    print("Failed to embed note '\(note.title)': \(error.localizedDescription)")
                     failed += 1
                 }
-                
-                // Update progress
-                let indexedNow = indexed
-                let failedNow = failed
-                await MainActor.run {
-                    self.indexingProgress = Double(indexedNow + failedNow) / Double(total)
-                    self.indexingStatus = "Indexed \(indexedNow)/\(total) notes..."
-                }
+
+                self.indexingProgress = Double(indexed + failed) / Double(total)
+                self.indexingStatus = "Indexed \(indexed)/\(total) notes..."
             }
-            
-            let indexedFinal = indexed
-            let failedFinal = failed
-            await MainActor.run {
-                self.isBusy = false
-                self.indexingStatus = "Completed: \(indexedFinal) indexed, \(failedFinal) failed"
-                
-                // Clear status after delay
-                Task {
-                    try? await Task.sleep(for: .seconds(3))
-                    await MainActor.run {
-                        self.indexingStatus = nil
-                        self.indexingProgress = 0.0
-                    }
-                }
+
+            try? modelContext.save()
+            self.isIndexing = false
+            self.indexingStatus = "Completed: \(indexed) indexed, \(failed) failed"
+            Task { @MainActor in
+                try? await Task.sleep(for: .seconds(3))
+                self.indexingStatus = nil
+                self.indexingProgress = 0.0
             }
         }
     }
-    
+
+    func handleNoteEdited(_ note: Note, modelContext: ModelContext) {
+        markNoteEmbeddingStale(note)
+        scheduleAutoIndex(for: note, modelContext: modelContext)
+    }
+
+    func indexedCountForActiveEmbedding(notes: [Note]) -> Int {
+        notes.filter { isNoteEmbeddingFresh($0) }.count
+    }
+
     // MARK: - Helpers
-    
-    private func buildMessageHistory(ragContext: [Note] = [], userQuery: String? = nil) -> [[String: String]] {
-        // Convert ChatMessage array to dict format for template
+
+    private func loadMessages(for session: ChatSession, modelContext: ModelContext) {
+        let sessionId = session.id
+        let descriptor = FetchDescriptor<ChatMessage>(
+            predicate: #Predicate<ChatMessage> { $0.session?.id == sessionId },
+            sortBy: [SortDescriptor(\.createdAt, order: .forward)]
+        )
+
+        do {
+            chatMessages = try modelContext.fetch(descriptor)
+        } catch {
+            chatMessages = []
+            modelError = "Failed to load session messages: \(error.localizedDescription)"
+        }
+    }
+
+    private func restoreSelectedSession() -> ChatSession? {
+        guard let activeSessionId else { return nil }
+        return sessions.first(where: { $0.id == activeSessionId })
+    }
+
+    private func ensureActiveSession(modelContext: ModelContext) -> ChatSession? {
+        if let current = activeSession() {
+            return current
+        }
+        if sessions.isEmpty {
+            createNewChatSession(modelContext: modelContext)
+            return activeSession()
+        }
+        if let first = sessions.first {
+            selectSession(first, modelContext: modelContext)
+            return first
+        }
+        return nil
+    }
+
+    private func autoTitle(from text: String) -> String {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.count <= 48 {
+            return trimmed
+        }
+        let cut = trimmed.prefix(48).trimmingCharacters(in: .whitespacesAndNewlines)
+        return "\(cut)..."
+    }
+
+    private func migrateUngroupedMessagesIntoLegacySession(modelContext: ModelContext) throws {
+        let ungroupedDescriptor = FetchDescriptor<ChatMessage>(
+            predicate: #Predicate<ChatMessage> { $0.session == nil },
+            sortBy: [SortDescriptor(\.createdAt, order: .forward)]
+        )
+        let ungrouped = try modelContext.fetch(ungroupedDescriptor)
+        guard !ungrouped.isEmpty else { return }
+
+        let legacy = try fetchOrCreateLegacySession(modelContext: modelContext)
+        for message in ungrouped {
+            message.session = legacy
+            if message.createdAt > legacy.updatedAt {
+                legacy.updatedAt = message.createdAt
+            }
+        }
+        try modelContext.save()
+    }
+
+    private func fetchOrCreateLegacySession(modelContext: ModelContext) throws -> ChatSession {
+        let legacyTitle = SessionDefaults.legacyTitle
+        let descriptor = FetchDescriptor<ChatSession>(
+            predicate: #Predicate<ChatSession> { $0.title == legacyTitle },
+            sortBy: [SortDescriptor(\.createdAt, order: .forward)]
+        )
+        if let existing = try modelContext.fetch(descriptor).first {
+            return existing
+        }
+
+        let legacy = ChatSession(title: SessionDefaults.legacyTitle)
+        modelContext.insert(legacy)
+        return legacy
+    }
+
+    private func ensureAtLeastOneSession(modelContext: ModelContext) throws {
+        let count = try modelContext.fetchCount(FetchDescriptor<ChatSession>())
+        if count == 0 {
+            modelContext.insert(ChatSession(title: SessionDefaults.newChatTitle))
+            try modelContext.save()
+        }
+    }
+
+    private func refreshSessions(modelContext: ModelContext) throws {
+        let descriptor = FetchDescriptor<ChatSession>(
+            sortBy: [SortDescriptor(\.updatedAt, order: .reverse)]
+        )
+        sessions = try modelContext.fetch(descriptor)
+    }
+
+    private func buildMessageHistory(ragContext: [Note] = []) -> [[String: String]] {
         var messages: [[String: String]] = []
-        
-        // Build system prompt with optional RAG context
         var systemContent = "You are a helpful assistant."
-        
+
         if !ragContext.isEmpty {
             systemContent += "\n\nRelevant context from your notes:\n"
             for note in ragContext {
@@ -355,38 +528,35 @@ class GlobalViewModel {
             }
             systemContent += "\nUse the above context to help answer the user's question when relevant."
         }
-        
+
         messages.append([
             "role": "system",
             "content": systemContent
         ])
-        
+
         for msg in chatMessages {
             messages.append([
                 "role": msg.role,
                 "content": msg.content
             ])
         }
-        
+
         return messages
     }
-    
+
     private func parseThinkTags(_ text: String) -> (content: String, thought: String?) {
-        // Parse <think>...</think> tags from response
         let thinkPattern = #"<think>([\s\S]*?)</think>"#
-        
+
         guard let regex = try? NSRegularExpression(pattern: thinkPattern, options: []) else {
             return (text, nil)
         }
-        
+
         let range = NSRange(text.startIndex..., in: text)
         var thoughtContent: String? = nil
         var cleanedContent = text
-        
-        // Extract all think blocks
         let matches = regex.matches(in: text, options: [], range: range)
         var thoughts: [String] = []
-        
+
         for match in matches.reversed() {
             if let thoughtRange = Range(match.range(at: 1), in: text) {
                 thoughts.insert(String(text[thoughtRange]), at: 0)
@@ -395,11 +565,11 @@ class GlobalViewModel {
                 cleanedContent.removeSubrange(fullRange)
             }
         }
-        
+
         if !thoughts.isEmpty {
             thoughtContent = thoughts.joined(separator: "\n")
         }
-        
+
         return (sanitizeOutput(cleanedContent), thoughtContent)
     }
 
@@ -415,19 +585,147 @@ class GlobalViewModel {
         }
         return cleaned.trimmingCharacters(in: .whitespacesAndNewlines)
     }
-}
 
-private extension GlobalViewModel {
-    func findItem(id: String) -> ModelCatalogItem? {
-        catalogStore.items.first(where: { $0.id == id })
-    }
-
-    func modelPathIfInstalled(_ item: ModelCatalogItem) -> String? {
+    private func modelPathIfInstalled(_ item: ModelCatalogItem) -> String? {
         do {
             let url = try ModelStorage.shared.fileURL(for: item)
             return FileManager.default.fileExists(atPath: url.path) ? url.path : nil
         } catch {
             return nil
         }
+    }
+
+    private func findItem(id: String) -> ModelCatalogItem? {
+        catalogStore.items.first(where: { $0.id == id })
+    }
+
+    private func loadChatModelAsync(item: ModelCatalogItem, persistSelection: Bool) async {
+        guard item.kind == .chat else { return }
+        guard let path = modelPathIfInstalled(item) else {
+            modelError = "Model file not found"
+            return
+        }
+        guard !isChatModelLoading else { return }
+
+        isChatModelLoading = true
+        modelError = nil
+
+        do {
+            try await llamaContext.loadModel(path: path, lowMemory: isLowPowerMode)
+            isChatModelLoaded = true
+            currentChatModelId = item.id
+            if persistSelection {
+                defaults.set(item.id, forKey: PreferenceKey.activeChatModelId)
+            }
+        } catch {
+            modelError = error.localizedDescription
+            isChatModelLoaded = false
+        }
+
+        isChatModelLoading = false
+    }
+
+    private func loadEmbeddingModelAsync(item: ModelCatalogItem, persistSelection: Bool) async {
+        guard item.kind == .embedding else { return }
+        guard let path = modelPathIfInstalled(item) else {
+            modelError = "Model file not found"
+            return
+        }
+        guard !isEmbeddingModelLoading else { return }
+
+        isEmbeddingModelLoading = true
+        modelError = nil
+
+        do {
+            try await llamaContext.loadEmbeddingModel(path: path, lowMemory: isLowPowerMode)
+            isEmbeddingModelLoaded = true
+            currentEmbeddingModelId = item.id
+            if persistSelection {
+                defaults.set(item.id, forKey: PreferenceKey.activeEmbeddingModelId)
+            }
+        } catch {
+            modelError = error.localizedDescription
+            isEmbeddingModelLoaded = false
+        }
+
+        isEmbeddingModelLoading = false
+    }
+
+    private func unloadChatModelAsync(clearSelection: Bool) async {
+        await llamaContext.unloadChat()
+        isChatModelLoaded = false
+        isChatModelLoading = false
+        if clearSelection {
+            currentChatModelId = nil
+            defaults.removeObject(forKey: PreferenceKey.activeChatModelId)
+        }
+    }
+
+    private func unloadEmbeddingModelAsync(clearSelection: Bool) async {
+        await llamaContext.unloadEmbedding()
+        isEmbeddingModelLoaded = false
+        isEmbeddingModelLoading = false
+        if clearSelection {
+            currentEmbeddingModelId = nil
+            defaults.removeObject(forKey: PreferenceKey.activeEmbeddingModelId)
+        }
+    }
+
+    private func noteContentHash(_ note: Note) -> String {
+        noteContentHash(title: note.title, content: note.content)
+    }
+
+    private func noteContentHash(title: String, content: String) -> String {
+        let text = "\(title)\n\(content)"
+        let digest = SHA256.hash(data: Data(text.utf8))
+        return digest.map { String(format: "%02x", $0) }.joined()
+    }
+
+    private func markNoteEmbeddingStale(_ note: Note) {
+        note.embedding = nil
+        note.embeddingModelId = nil
+        note.embeddingUpdatedAt = nil
+        note.embeddingContentHash = nil
+    }
+
+    private func scheduleAutoIndex(for note: Note, modelContext: ModelContext) {
+        pendingAutoIndexTasks[note.id]?.cancel()
+        pendingAutoIndexTasks[note.id] = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 1_000_000_000)
+            guard !Task.isCancelled else { return }
+            guard isEmbeddingModelLoaded else { return }
+            do {
+                try await indexSingleNote(note: note, modelContext: modelContext)
+                try? modelContext.save()
+            } catch {
+                // Silent for auto-index; user can always trigger full re-index from Settings.
+            }
+            self.pendingAutoIndexTasks[note.id] = nil
+        }
+    }
+
+    private func indexSingleNote(note: Note, modelContext: ModelContext) async throws {
+        guard let embeddingModelId = currentEmbeddingModelId else {
+            throw LlamaError.notLoaded
+        }
+
+        let textToEmbed = "\(note.title)\n\(note.content)"
+        let contentHash = noteContentHash(note)
+        let embedding = try await llamaContext.embedWithEmbeddingModel(text: textToEmbed)
+
+        note.embedding = embedding
+        note.embeddingModelId = embeddingModelId
+        note.embeddingUpdatedAt = Date()
+        note.embeddingContentHash = contentHash
+
+        try? modelContext.save()
+    }
+
+    private func isNoteEmbeddingFresh(_ note: Note) -> Bool {
+        guard let embedding = note.embedding, !embedding.isEmpty else { return false }
+        guard let modelId = note.embeddingModelId else { return false }
+        guard modelId == currentEmbeddingModelId else { return false }
+        guard let savedHash = note.embeddingContentHash else { return false }
+        return savedHash == noteContentHash(note)
     }
 }
