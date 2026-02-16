@@ -5,25 +5,32 @@ struct NoteEditorView: View {
     @Environment(GlobalViewModel.self) private var vm
     @Environment(\.modelContext) private var modelContext
     @Environment(\.undoManager) private var undoManager
+    @Environment(\.colorScheme) private var colorScheme
     @Bindable var note: Note
+
     @State private var editorSelection = NSRange(location: 0, length: 0)
     @State private var aiController = NoteEditorAIController()
-    @State private var hideUnchangedDiffLines = true
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            TextField("Title", text: $note.title, axis: .vertical)
-                .font(.system(size: 28, weight: .bold))
-                .padding(.horizontal)
-                .padding(.top)
-                .disabled(aiController.hasPendingPreview)
+        ZStack {
+            backgroundLayer
 
-            actionBar
+            VStack(spacing: 12) {
+                titleCard
+                toolsCard
 
-            editorSurface
+                if aiController.hasPendingPreview {
+                    inlinePreviewBar
+                        .transition(.asymmetric(insertion: .opacity.combined(with: .move(edge: .top)), removal: .opacity))
+                }
+
+                editorCard
+            }
+            .padding(.horizontal, 12)
+            .padding(.top, 8)
+            .padding(.bottom, 10)
         }
         .navigationBarTitleDisplayMode(.inline)
-        .background(Color(.systemBackground))
         .onChange(of: note.title) {
             note.updatedAt = Date()
             vm.handleNoteEdited(note, modelContext: modelContext)
@@ -38,200 +45,283 @@ struct NoteEditorView: View {
                 aiController.stop(llamaContext: vm.llamaContext)
             }
         }
+        .animation(.snappy(duration: 0.24), value: aiController.hasPendingPreview)
     }
 
-    private var actionBar: some View {
+    private var backgroundLayer: some View {
+        LinearGradient(
+            colors: [
+                Color(.systemGroupedBackground),
+                Color.accentColor.opacity(colorScheme == .dark ? 0.14 : 0.06)
+            ],
+            startPoint: .topLeading,
+            endPoint: .bottomTrailing
+        )
+        .ignoresSafeArea()
+    }
+
+    private var titleCard: some View {
         VStack(alignment: .leading, spacing: 8) {
+            TextField("Title", text: $note.title, axis: .vertical)
+                .font(.system(size: 30, weight: .bold, design: .rounded))
+                .disabled(aiController.hasPendingPreview)
+
+            HStack(spacing: 8) {
+                Text(noteMetricsText)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                if aiController.hasPendingPreview {
+                    Label("Previewing", systemImage: "sparkles")
+                        .font(.caption)
+                        .foregroundStyle(Color.accentColor)
+                }
+            }
+        }
+        .padding(14)
+        .background(cardFill, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .stroke(cardStroke, lineWidth: 0.8)
+        )
+    }
+
+    private var toolsCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Label("Writing Tools", systemImage: "wand.and.stars")
+                    .font(.subheadline.weight(.semibold))
+                Spacer()
+                Text(vm.isChatModelLoaded ? "Model Ready" : "Model Not Loaded")
+                    .font(.caption2)
+                    .foregroundStyle(vm.isChatModelLoaded ? .green : .secondary)
+            }
+
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 8) {
                     ForEach(NoteAIAction.allCases) { action in
                         Button {
                             startAction(action)
                         } label: {
-                            Label(action.title, systemImage: action.icon)
-                                .font(.caption)
-                                .padding(.horizontal, 10)
-                                .padding(.vertical, 7)
-                                .background(Color(.secondarySystemBackground))
-                                .clipShape(Capsule())
+                            HStack(spacing: 6) {
+                                Image(systemName: action.icon)
+                                    .font(.caption.weight(.semibold))
+                                Text(action.title)
+                                    .font(.caption.weight(.medium))
+                            }
+                            .padding(.horizontal, 11)
+                            .padding(.vertical, 8)
+                            .background(buttonFill, in: Capsule())
                         }
                         .buttonStyle(.plain)
                         .disabled(aiController.hasPendingPreview)
                     }
                 }
-                .padding(.horizontal)
+                .padding(.vertical, 1)
             }
 
-            Picker(
-                "Style",
-                selection: Binding(
-                    get: { aiController.outputStyle },
-                    set: { aiController.outputStyle = $0 }
-                )
-            ) {
+            HStack(spacing: 8) {
                 ForEach(NoteAIOutputStyle.allCases) { style in
-                    Text(style.title).tag(style)
+                    styleButton(style)
                 }
             }
-            .pickerStyle(.segmented)
-            .padding(.horizontal)
             .disabled(aiController.hasPendingPreview)
 
-            if !vm.isChatModelLoaded {
-                Text("Load a chat model in Settings to enable in-note AI actions.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal)
-            } else if let scope = aiController.scopeDescription {
-                Text(scope)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal)
-            } else {
-                Text(selectionScopeHint)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal)
-            }
-
-            if !aiController.hasPendingPreview, let error = aiController.errorMessage {
-                Text(error)
-                    .font(.caption)
-                    .foregroundStyle(.red)
-                    .padding(.horizontal)
-            }
+            Text(scopeHintText)
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
+        .padding(14)
+        .background(cardFill, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .stroke(cardStroke, lineWidth: 0.8)
+        )
     }
 
-    private var editorSurface: some View {
-        Group {
+    private func styleButton(_ style: NoteAIOutputStyle) -> some View {
+        let isSelected = aiController.outputStyle == style
+        return Button {
+            aiController.outputStyle = style
+        } label: {
+            Text(style.title)
+                .font(.caption.weight(.semibold))
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 7)
+                .foregroundStyle(isSelected ? .white : .primary)
+                .background(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .fill(isSelected ? Color.accentColor : buttonFill)
+                )
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var inlinePreviewBar: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 8) {
+                Image(systemName: "sparkles")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(Color.accentColor)
+                    .frame(width: 24, height: 24)
+                    .background(Color.accentColor.opacity(0.14), in: Circle())
+
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("AI Draft")
+                        .font(.subheadline.weight(.semibold))
+                    Text(aiController.isGenerating ? "Writing suggestion in your note..." : "Review and choose what to keep.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                Spacer()
+                if aiController.isGenerating {
+                    ProgressView()
+                        .controlSize(.small)
+                }
+            }
+
+            HStack(spacing: 8) {
+                if aiController.isGenerating {
+                    Button {
+                        aiController.stop(llamaContext: vm.llamaContext)
+                    } label: {
+                        Label("Pause", systemImage: "pause.fill")
+                    }
+                    .buttonStyle(.bordered)
+                } else if aiController.canResume {
+                    Button {
+                        _ = aiController.resume(
+                            llamaContext: vm.llamaContext,
+                            isAppGenerating: vm.isGenerating
+                        )
+                    } label: {
+                        Label("Resume", systemImage: "play.fill")
+                    }
+                    .buttonStyle(.bordered)
+                }
+
+                Button(role: .destructive) {
+                    discardPreview()
+                } label: {
+                    Label("Discard", systemImage: "xmark")
+                }
+                .buttonStyle(.bordered)
+
+                Spacer()
+
+                Button {
+                    acceptPreview()
+                } label: {
+                    Label("Accept", systemImage: "checkmark")
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(aiController.isGenerating || !aiController.canAcceptPreview)
+            }
+        }
+        .padding(14)
+        .background(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(Color(.secondarySystemBackground))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .stroke(Color.accentColor.opacity(0.25), lineWidth: 0.9)
+        )
+        .shadow(color: Color.black.opacity(colorScheme == .dark ? 0.2 : 0.05), radius: 8, x: 0, y: 2)
+    }
+
+    private var editorCard: some View {
+        ZStack(alignment: .topLeading) {
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .fill(cardFill)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 18, style: .continuous)
+                        .stroke(cardStroke, lineWidth: 0.8)
+                )
+
+            if displayedEditorText.isEmpty {
+                Text("Write your note here...")
+                    .foregroundStyle(.tertiary)
+                    .padding(.horizontal, 16)
+                    .padding(.top, 16)
+            }
+
+            SelectionAwareTextEditor(
+                text: editorTextBinding,
+                selectedRange: editorSelectionBinding,
+                isEditable: !aiController.hasPendingPreview
+            )
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+
             if aiController.hasPendingPreview {
-                inlinePreviewSurface
-            } else {
-                liveEditorSurface
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .fill(Color.accentColor.opacity(colorScheme == .dark ? 0.10 : 0.07))
+                    .padding(6)
+                    .allowsHitTesting(false)
             }
         }
         .frame(maxHeight: .infinity)
     }
 
-    private var liveEditorSurface: some View {
-        ZStack(alignment: .topLeading) {
-            if note.content.isEmpty {
-                Text("Write your note here...")
-                    .foregroundStyle(.tertiary)
-                    .padding(.horizontal)
-                    .padding(.top, 8)
-            }
+    private var cardFill: Color {
+        Color(.secondarySystemBackground)
+    }
 
-            SelectionAwareTextEditor(
-                text: $note.content,
-                selectedRange: $editorSelection,
-                isEditable: true
+    private var cardStroke: Color {
+        colorScheme == .dark ? Color.white.opacity(0.06) : Color.black.opacity(0.06)
+    }
+
+    private var buttonFill: Color {
+        colorScheme == .dark ? Color.white.opacity(0.08) : Color.black.opacity(0.04)
+    }
+
+    private var displayedEditorText: String {
+        aiController.previewNoteContent(fallbackCurrentText: note.content)
+    }
+
+    private var editorTextBinding: Binding<String> {
+        if aiController.hasPendingPreview {
+            return Binding(
+                get: { displayedEditorText },
+                set: { _ in }
             )
-            .padding(.horizontal)
         }
+        return $note.content
     }
 
-    private var inlinePreviewSurface: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            inlinePreviewControls
-            Divider()
-
-            if !aiController.previewThought.isEmpty {
-                VStack(alignment: .leading, spacing: 4) {
-                    Text("Thought Process")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.secondary)
-                    Text(aiController.previewThought)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
-                .padding(.horizontal)
-                .padding(.top, 10)
-                .padding(.bottom, 6)
-            }
-
-            HStack {
-                Text("Diff Preview")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
-                Spacer()
-                Toggle("Hide unchanged", isOn: $hideUnchangedDiffLines)
-                    .labelsHidden()
-            }
-            .padding(.horizontal)
-            .padding(.top, 10)
-
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 4) {
-                    if displayedDiffLines.isEmpty {
-                        Text("Generating preview...")
-                            .foregroundStyle(.secondary)
-                            .padding(.horizontal)
-                            .padding(.top, 8)
-                    } else {
-                        ForEach(Array(displayedDiffLines.enumerated()), id: \.offset) { _, line in
-                            diffLineRow(line)
-                        }
-                    }
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal)
-                .padding(.vertical, 8)
-            }
-
-            if let error = aiController.errorMessage {
-                Text(error)
-                    .font(.caption)
-                    .foregroundStyle(.red)
-                    .padding(.horizontal)
-                    .padding(.bottom, 8)
-            }
-        }
-        .background(Color(.secondarySystemBackground).opacity(0.55))
-    }
-
-    private var inlinePreviewControls: some View {
-        HStack(spacing: 10) {
-            Label("\(aiController.activeAction?.title ?? "AI") Draft", systemImage: "wand.and.stars")
-                .font(.subheadline.weight(.semibold))
-
-            if aiController.isGenerating {
-                ProgressView()
-                    .controlSize(.small)
-            }
-
-            Spacer()
-
-            if aiController.isGenerating {
-                Button("Stop") {
-                    aiController.stop(llamaContext: vm.llamaContext)
-                }
-                .buttonStyle(.bordered)
-            } else if aiController.canResume {
-                Button("Resume") {
-                    _ = aiController.resume(
-                        llamaContext: vm.llamaContext,
-                        isAppGenerating: vm.isGenerating
+    private var editorSelectionBinding: Binding<NSRange> {
+        if aiController.hasPendingPreview {
+            return Binding(
+                get: {
+                    aiController.previewSelectionRange(
+                        fallback: clampedSelection(editorSelection, in: displayedEditorText)
                     )
-                }
-                .buttonStyle(.bordered)
-            }
-
-            Button("Reject", role: .destructive) {
-                rejectPreview()
-            }
-            .buttonStyle(.bordered)
-
-            Button("Accept") {
-                acceptPreview()
-            }
-            .buttonStyle(.borderedProminent)
-            .disabled(aiController.isGenerating || !aiController.canAcceptPreview)
+                },
+                set: { _ in }
+            )
         }
-        .padding(.horizontal)
-        .padding(.vertical, 10)
+        return $editorSelection
+    }
+
+    private var noteMetricsText: String {
+        let words = wordCount(in: note.content)
+        return words == 1 ? "1 word" : "\(words) words"
+    }
+
+    private var scopeHintText: String {
+        if !vm.isChatModelLoaded {
+            return "Load a chat model in Settings to enable AI writing tools."
+        }
+        if let scope = aiController.scopeDescription {
+            return scope
+        }
+        let safe = clampedSelection(editorSelection, in: note.content)
+        if safe.length > 0 {
+            return "Selection detected: actions apply only to highlighted text."
+        }
+        return "No selection: Auto-Complete uses cursor; other actions apply to full note."
     }
 
     private func startAction(_ action: NoteAIAction) {
@@ -255,7 +345,7 @@ struct NoteEditorView: View {
         editorSelection = clampedSelection(accepted.selectedRange, in: accepted.content)
     }
 
-    private func rejectPreview() {
+    private func discardPreview() {
         if aiController.isGenerating {
             aiController.stop(llamaContext: vm.llamaContext)
         }
@@ -284,62 +374,14 @@ struct NoteEditorView: View {
         undoManager.setActionName(action.undoActionName)
     }
 
+    private func wordCount(in text: String) -> Int {
+        text.split { $0.isWhitespace || $0.isNewline }.count
+    }
+
     private func clampedSelection(_ range: NSRange, in text: String) -> NSRange {
         let length = (text as NSString).length
         let location = min(max(0, range.location), length)
         let safeLength = min(max(0, range.length), length - location)
         return NSRange(location: location, length: safeLength)
-    }
-
-    private var displayedDiffLines: [NoteEditorAIController.PreviewDiffLine] {
-        aiController.previewDiffLines(hideUnchanged: hideUnchangedDiffLines)
-    }
-
-    private var selectionScopeHint: String {
-        let safe = clampedSelection(editorSelection, in: note.content)
-        if safe.length > 0 {
-            return "Selection detected: AI actions will target only highlighted text."
-        }
-        return "No selection: Auto-Complete uses cursor; other actions process the full note."
-    }
-
-    private func diffLineRow(_ line: NoteEditorAIController.PreviewDiffLine) -> some View {
-        let marker: String
-        let tint: Color
-        let background: Color
-
-        switch line.kind {
-        case .context:
-            marker = " "
-            tint = .secondary
-            background = .clear
-        case .removed:
-            marker = "-"
-            tint = .red
-            background = Color.red.opacity(0.08)
-        case .added:
-            marker = "+"
-            tint = .green
-            background = Color.green.opacity(0.10)
-        case .meta:
-            marker = "…"
-            tint = .secondary.opacity(0.8)
-            background = Color(.tertiarySystemFill)
-        }
-
-        return HStack(alignment: .top, spacing: 8) {
-            Text(marker)
-                .font(.system(.caption, design: .monospaced))
-                .foregroundStyle(tint)
-                .frame(width: 10, alignment: .leading)
-            Text(line.text.isEmpty ? " " : line.text)
-                .font(.system(.caption, design: .monospaced))
-                .foregroundStyle(tint)
-                .frame(maxWidth: .infinity, alignment: .leading)
-        }
-        .padding(.horizontal, 6)
-        .padding(.vertical, 3)
-        .background(background)
-        .clipShape(RoundedRectangle(cornerRadius: 4))
     }
 }

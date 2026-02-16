@@ -81,18 +81,6 @@ final class NoteEditorAIController {
         let selectedRange: NSRange
     }
 
-    enum DiffLineKind {
-        case context
-        case removed
-        case added
-        case meta
-    }
-
-    struct PreviewDiffLine {
-        let kind: DiffLineKind
-        let text: String
-    }
-
     private enum TargetMode {
         case selection
         case cursor
@@ -113,7 +101,6 @@ final class NoteEditorAIController {
     var outputStyle: NoteAIOutputStyle = .balanced
     var isGenerating = false
     var previewText = ""
-    var previewThought = ""
     var errorMessage: String?
     var scopeDescription: String?
 
@@ -132,20 +119,6 @@ final class NoteEditorAIController {
         !previewText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
-    func previewDiffLines(hideUnchanged: Bool) -> [PreviewDiffLine] {
-        guard activeAction != nil else { return [] }
-        let before = previewTargetBeforeText()
-        let after = previewTargetAfterText()
-        let lines = makeDiffLines(before: before, after: after)
-        guard hideUnchanged else { return lines }
-
-        let filtered = lines.filter { $0.kind != .context }
-        if filtered.isEmpty, !lines.isEmpty {
-            return [PreviewDiffLine(kind: .meta, text: "No changed lines in preview.")]
-        }
-        return filtered
-    }
-
     @discardableResult
     func start(
         action: NoteAIAction,
@@ -156,12 +129,12 @@ final class NoteEditorAIController {
         llamaContext: LlamaContext
     ) -> Bool {
         guard !hasPendingPreview else {
-            errorMessage = "Accept or reject the current preview first."
+            errorMessage = "Accept or discard the current draft first."
             return false
         }
 
         guard isModelLoaded else {
-            errorMessage = "Load a chat model from Settings to use in-note AI actions."
+            errorMessage = "Load a chat model from Settings to use AI actions."
             return false
         }
 
@@ -209,9 +182,7 @@ final class NoteEditorAIController {
         )
 
         activeAction = action
-        isGenerating = true
         previewText = ""
-        previewThought = ""
         errorMessage = nil
         scopeDescription = "\(scopeText(for: mode)) • Style: \(outputStyle.title)"
 
@@ -219,13 +190,9 @@ final class NoteEditorAIController {
             errorMessage = "Could not prepare action context."
             return false
         }
-        let prompt = buildPrompt(action: action, snapshot: currentSnapshot, style: outputStyle)
-        runGeneration(
-            prompt: prompt,
-            appendToExistingPreview: false,
-            llamaContext: llamaContext
-        )
 
+        let prompt = buildPrompt(action: action, snapshot: currentSnapshot, style: outputStyle)
+        runGeneration(prompt: prompt, appendToExistingPreview: false, llamaContext: llamaContext)
         return true
     }
 
@@ -241,8 +208,8 @@ final class NoteEditorAIController {
             return false
         }
 
-        let currentDraft = previewText
-        guard !currentDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+        let currentDraft = previewText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !currentDraft.isEmpty else {
             errorMessage = "Nothing to resume yet."
             return false
         }
@@ -254,11 +221,7 @@ final class NoteEditorAIController {
             style: outputStyle,
             partialDraft: currentDraft
         )
-        runGeneration(
-            prompt: prompt,
-            appendToExistingPreview: true,
-            llamaContext: llamaContext
-        )
+        runGeneration(prompt: prompt, appendToExistingPreview: true, llamaContext: llamaContext)
         return true
     }
 
@@ -277,14 +240,11 @@ final class NoteEditorAIController {
         guard canAcceptPreview else { return nil }
 
         let replacement = replacementText(for: action, snapshot: snapshot, preview: previewText)
-        let resultContent = (snapshot.baseText as NSString).replacingCharacters(in: snapshot.replacementRange, with: replacement)
-        let cursorLocation = snapshot.replacementRange.location + (replacement as NSString).length
-        let result = ApplyResult(
-            content: resultContent,
-            selectedRange: NSRange(location: cursorLocation, length: 0),
-            action: action
-        )
+        let content = (snapshot.baseText as NSString).replacingCharacters(in: snapshot.replacementRange, with: replacement)
+        let location = snapshot.replacementRange.location + (replacement as NSString).length
+        let selectedRange = clampedRange(NSRange(location: location, length: 0), in: content)
 
+        let result = ApplyResult(content: content, selectedRange: selectedRange, action: action)
         clearState()
         return result
     }
@@ -303,133 +263,38 @@ final class NoteEditorAIController {
         return result
     }
 
+    func previewNoteContent(fallbackCurrentText: String) -> String {
+        guard let action = activeAction, let snapshot else { return fallbackCurrentText }
+        let replacement = replacementText(for: action, snapshot: snapshot, preview: previewText)
+        return (snapshot.baseText as NSString).replacingCharacters(in: snapshot.replacementRange, with: replacement)
+    }
+
+    func previewSelectionRange(fallback: NSRange) -> NSRange {
+        guard let action = activeAction, let snapshot else { return fallback }
+        let replacement = replacementText(for: action, snapshot: snapshot, preview: previewText)
+        let previewContent = previewNoteContent(fallbackCurrentText: snapshot.baseText)
+        let location = snapshot.replacementRange.location + (replacement as NSString).length
+        return clampedRange(NSRange(location: location, length: 0), in: previewContent)
+    }
+
     private func clearState() {
         generationTask?.cancel()
         generationTask = nil
         activeAction = nil
         isGenerating = false
         previewText = ""
-        previewThought = ""
         errorMessage = nil
         scopeDescription = nil
         snapshot = nil
     }
 
-    private func scopeText(for mode: TargetMode) -> String {
-        switch mode {
-        case .selection:
-            return "Scope: selected text"
-        case .cursor:
-            return "Scope: insert at cursor"
-        case .fullNote:
-            return "Scope: full note"
-        }
-    }
-
-    private func replacementText(for action: NoteAIAction, snapshot: Snapshot, preview: String) -> String {
-        if action == .autoComplete, snapshot.mode == .selection {
-            return snapshot.selectedText + preview
-        }
-        return preview
-    }
-
-    private func previewTargetBeforeText() -> String {
-        guard let snapshot else { return "" }
-        switch snapshot.mode {
-        case .selection:
-            return snapshot.selectedText
-        case .cursor:
-            return ""
-        case .fullNote:
-            return snapshot.baseText
-        }
-    }
-
-    private func previewTargetAfterText() -> String {
-        guard let action = activeAction, let snapshot else { return "" }
-        return replacementText(for: action, snapshot: snapshot, preview: previewText)
-    }
-
-    private func makeDiffLines(before: String, after: String) -> [PreviewDiffLine] {
-        let beforeLines = splitLines(before)
-        let afterLines = splitLines(after)
-
-        if beforeLines == afterLines {
-            if beforeLines.isEmpty { return [] }
-            return beforeLines.map { PreviewDiffLine(kind: .context, text: $0) }
-        }
-
-        if beforeLines.isEmpty {
-            return afterLines.map { PreviewDiffLine(kind: .added, text: $0) }
-        }
-
-        if afterLines.isEmpty {
-            return beforeLines.map { PreviewDiffLine(kind: .removed, text: $0) }
-        }
-
-        var prefixCount = 0
-        let maxPrefix = min(beforeLines.count, afterLines.count)
-        while prefixCount < maxPrefix, beforeLines[prefixCount] == afterLines[prefixCount] {
-            prefixCount += 1
-        }
-
-        var suffixCount = 0
-        let maxSuffix = min(beforeLines.count - prefixCount, afterLines.count - prefixCount)
-        while suffixCount < maxSuffix,
-              beforeLines[beforeLines.count - 1 - suffixCount] == afterLines[afterLines.count - 1 - suffixCount] {
-            suffixCount += 1
-        }
-
-        let prefixLines = Array(beforeLines.prefix(prefixCount))
-        let suffixLines = suffixCount > 0 ? Array(beforeLines.suffix(suffixCount)) : []
-        let beforeMiddle = Array(beforeLines[prefixCount..<(beforeLines.count - suffixCount)])
-        let afterMiddle = Array(afterLines[prefixCount..<(afterLines.count - suffixCount)])
-
-        var lines: [PreviewDiffLine] = []
-        appendContext(lines: prefixLines, to: &lines, keepTail: true)
-        lines.append(contentsOf: beforeMiddle.map { PreviewDiffLine(kind: .removed, text: $0) })
-        lines.append(contentsOf: afterMiddle.map { PreviewDiffLine(kind: .added, text: $0) })
-        appendContext(lines: suffixLines, to: &lines, keepTail: false)
-        return lines
-    }
-
-    private func appendContext(lines: [String], to output: inout [PreviewDiffLine], keepTail: Bool) {
-        let contextLimit = 4
-        guard !lines.isEmpty else { return }
-
-        if lines.count <= contextLimit {
-            output.append(contentsOf: lines.map { PreviewDiffLine(kind: .context, text: $0) })
-            return
-        }
-
-        let hiddenCount = lines.count - contextLimit
-        if keepTail {
-            output.append(PreviewDiffLine(kind: .meta, text: "... \(hiddenCount) unchanged line(s) ..."))
-            output.append(contentsOf: lines.suffix(contextLimit).map { PreviewDiffLine(kind: .context, text: $0) })
-        } else {
-            output.append(contentsOf: lines.prefix(contextLimit).map { PreviewDiffLine(kind: .context, text: $0) })
-            output.append(PreviewDiffLine(kind: .meta, text: "... \(hiddenCount) unchanged line(s) ..."))
-        }
-    }
-
-    private func splitLines(_ text: String) -> [String] {
-        guard !text.isEmpty else { return [] }
-        return text.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
-    }
-
-    private func runGeneration(
-        prompt: String,
-        appendToExistingPreview: Bool,
-        llamaContext: LlamaContext
-    ) {
+    private func runGeneration(prompt: String, appendToExistingPreview: Bool, llamaContext: LlamaContext) {
         generationTask?.cancel()
         isGenerating = true
-        let existingPreview = appendToExistingPreview ? previewText : ""
-        let existingThought = appendToExistingPreview ? previewThought : ""
         if !appendToExistingPreview {
             previewText = ""
-            previewThought = ""
         }
+        let basePreview = appendToExistingPreview ? previewText : ""
 
         generationTask = Task { @MainActor in
             defer {
@@ -456,14 +321,8 @@ final class NoteEditorAIController {
                 for try await token in stream {
                     if Task.isCancelled { break }
                     rawOutput += token
-                    let parsed = parseThinkTags(rawOutput)
-                    if appendToExistingPreview {
-                        previewText = existingPreview + parsed.content
-                        previewThought = mergeThought(existing: existingThought, new: parsed.thought)
-                    } else {
-                        previewText = parsed.content
-                        previewThought = parsed.thought ?? ""
-                    }
+                    let visible = visibleContent(from: rawOutput)
+                    previewText = appendToExistingPreview ? (basePreview + visible) : visible
                 }
             } catch {
                 errorMessage = "Generation failed: \(error.localizedDescription)"
@@ -571,13 +430,11 @@ final class NoteEditorAIController {
         """
     }
 
-    private func mergeThought(existing: String, new: String?) -> String {
-        let trimmedExisting = existing.trimmingCharacters(in: .whitespacesAndNewlines)
-        let trimmedNew = (new ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-
-        if trimmedExisting.isEmpty { return trimmedNew }
-        if trimmedNew.isEmpty { return trimmedExisting }
-        return "\(trimmedExisting)\n\(trimmedNew)"
+    private func replacementText(for action: NoteAIAction, snapshot: Snapshot, preview: String) -> String {
+        if action == .autoComplete, snapshot.mode == .selection {
+            return snapshot.selectedText + preview
+        }
+        return preview
     }
 
     private func inputText(for snapshot: Snapshot) -> String {
@@ -586,6 +443,17 @@ final class NoteEditorAIController {
             return snapshot.selectedText
         case .cursor, .fullNote:
             return snapshot.baseText
+        }
+    }
+
+    private func scopeText(for mode: TargetMode) -> String {
+        switch mode {
+        case .selection:
+            return "Scope: selected text"
+        case .cursor:
+            return "Scope: insert at cursor"
+        case .fullNote:
+            return "Scope: full note"
         }
     }
 
@@ -612,35 +480,22 @@ final class NoteEditorAIController {
         }
     }
 
-    private func clampedRange(_ range: NSRange, in text: String) -> NSRange {
-        let length = (text as NSString).length
-        let location = min(max(0, range.location), length)
-        let safeLength = min(max(0, range.length), length - location)
-        return NSRange(location: location, length: safeLength)
-    }
-
-    private func parseThinkTags(_ text: String) -> (content: String, thought: String?) {
+    private func visibleContent(from text: String) -> String {
         let pattern = #"<think>([\s\S]*?)</think>"#
         guard let regex = try? NSRegularExpression(pattern: pattern, options: []) else {
-            return (sanitizeOutput(text), nil)
+            return sanitizeOutput(text)
         }
 
-        let range = NSRange(text.startIndex..., in: text)
-        var thoughts: [String] = []
         var cleaned = text
+        let range = NSRange(text.startIndex..., in: text)
         let matches = regex.matches(in: text, options: [], range: range)
 
         for match in matches.reversed() {
-            if let thoughtRange = Range(match.range(at: 1), in: text) {
-                thoughts.insert(String(text[thoughtRange]), at: 0)
-            }
             if let fullRange = Range(match.range, in: cleaned) {
                 cleaned.removeSubrange(fullRange)
             }
         }
-
-        let thought = thoughts.isEmpty ? nil : thoughts.joined(separator: "\n")
-        return (sanitizeOutput(cleaned), thought)
+        return sanitizeOutput(cleaned)
     }
 
     private func sanitizeOutput(_ content: String) -> String {
@@ -654,5 +509,12 @@ final class NoteEditorAIController {
             cleaned = cleaned.replacingOccurrences(of: token, with: "")
         }
         return cleaned.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func clampedRange(_ range: NSRange, in text: String) -> NSRange {
+        let length = (text as NSString).length
+        let location = min(max(0, range.location), length)
+        let safeLength = min(max(0, range.length), length - location)
+        return NSRange(location: location, length: safeLength)
     }
 }
