@@ -28,7 +28,9 @@ class GlobalViewModel {
     enum RAGStatus: Equatable {
         case ready
         case disabledNoEmbeddingModel
-        case indexing
+        case preparingModel
+        case preparingIndex
+        case timedOut
         case noIndexedNotes
         case usedContext(count: Int)
         case failed(String)
@@ -292,37 +294,28 @@ class GlobalViewModel {
         generationTask = Task { @MainActor in
             var ragContext: [Note] = []
 
-            if isEmbeddingModelLoaded {
-                var eligibleNotes = notes.filter { isNoteEmbeddingFresh($0) }
-                if eligibleNotes.isEmpty && !notes.isEmpty {
-                    self.ragStatus = .indexing
-                    do {
-                        _ = try await ensureIndexedForRAG(notes: notes, modelContext: modelContext)
-                        eligibleNotes = notes.filter { isNoteEmbeddingFresh($0) }
-                    } catch {
-                        self.ragStatus = .failed(error.localizedDescription)
+            if !notes.isEmpty {
+                let ragReady = await ensureRAGReadyBeforeSend(notes: notes, modelContext: modelContext)
+                if ragReady, isEmbeddingModelLoaded {
+                    let eligibleNotes = notes.filter { isNoteEmbeddingFresh($0) }
+                    if eligibleNotes.isEmpty {
+                        self.ragStatus = .noIndexedNotes
+                    } else {
+                        do {
+                            let queryEmbedding = try await llamaContext.embedWithEmbeddingModel(text: userMessageText)
+                            let foundContext = vectorSearchService.findSimilarNotes(
+                                queryEmbedding: queryEmbedding,
+                                notes: eligibleNotes,
+                                topK: 3
+                            )
+                            ragContext = foundContext
+                            self.retrievedContext = foundContext
+                            self.ragStatus = .usedContext(count: foundContext.count)
+                        } catch {
+                            self.ragStatus = .failed(error.localizedDescription)
+                        }
                     }
                 }
-
-                if eligibleNotes.isEmpty {
-                    self.ragStatus = .noIndexedNotes
-                } else {
-                    do {
-                        let queryEmbedding = try await llamaContext.embedWithEmbeddingModel(text: userMessageText)
-                        let foundContext = vectorSearchService.findSimilarNotes(
-                            queryEmbedding: queryEmbedding,
-                            notes: eligibleNotes,
-                            topK: 3
-                        )
-                        ragContext = foundContext
-                        self.retrievedContext = foundContext
-                        self.ragStatus = .usedContext(count: foundContext.count)
-                    } catch {
-                        self.ragStatus = .failed(error.localizedDescription)
-                    }
-                }
-            } else {
-                self.ragStatus = .disabledNoEmbeddingModel
             }
 
             let messages = buildMessageHistory(ragContext: ragContext)
@@ -375,10 +368,14 @@ class GlobalViewModel {
         switch ragStatus {
         case .ready:
             return nil
+        case .preparingModel:
+            return "RAG: preparing embedding model..."
+        case .preparingIndex:
+            return "RAG: preparing note index..."
+        case .timedOut:
+            return "RAG preparation timed out. Answering without note context."
         case .disabledNoEmbeddingModel:
             return "RAG is disabled: load an embedding model."
-        case .indexing:
-            return "RAG is preparing note index..."
         case .noIndexedNotes:
             return "No indexed notes for the active embedding model."
         case .usedContext(let count):
@@ -441,6 +438,56 @@ class GlobalViewModel {
             } catch {
                 // Do not surface hard error for automatic background refresh.
             }
+        }
+    }
+
+    private func ensureRAGReadyBeforeSend(notes: [Note], modelContext: ModelContext) async -> Bool {
+        let deadline = Date().addingTimeInterval(10)
+        func timedOut() -> Bool { Date() > deadline }
+
+        do {
+            if timedOut() {
+                ragStatus = .timedOut
+                return false
+            }
+
+            if !isEmbeddingModelLoaded {
+                ragStatus = .preparingModel
+                let loaded = await ensureEmbeddingModelLoadedForRAG()
+                if !loaded {
+                    ragStatus = .disabledNoEmbeddingModel
+                    return false
+                }
+            }
+
+            if timedOut() {
+                ragStatus = .timedOut
+                return false
+            }
+
+            if isIndexing {
+                ragStatus = .preparingIndex
+                let finished = await waitForIndexingToFinish(before: deadline)
+                if !finished {
+                    ragStatus = .timedOut
+                    return false
+                }
+            }
+
+            if !notesNeedingEmbedding(notes).isEmpty {
+                ragStatus = .preparingIndex
+                _ = try await ensureIndexedForRAG(notes: notes, modelContext: modelContext)
+            }
+
+            if timedOut() {
+                ragStatus = .timedOut
+                return false
+            }
+
+            return true
+        } catch {
+            ragStatus = .failed(error.localizedDescription)
+            return false
         }
     }
 
@@ -625,6 +672,28 @@ class GlobalViewModel {
         catalogStore.items.first(where: { $0.id == id })
     }
 
+    private func ensureEmbeddingModelLoadedForRAG() async -> Bool {
+        if isEmbeddingModelLoaded {
+            return true
+        }
+
+        if let id = currentEmbeddingModelId,
+           let item = findItem(id: id),
+           modelPathIfInstalled(item) != nil {
+            await loadEmbeddingModelAsync(item: item, persistSelection: false)
+            if isEmbeddingModelLoaded {
+                return true
+            }
+        }
+
+        if let fallbackItem = catalogStore.items(kind: .embedding)
+            .first(where: { modelPathIfInstalled($0) != nil }) {
+            await loadEmbeddingModelAsync(item: fallbackItem, persistSelection: true)
+        }
+
+        return isEmbeddingModelLoaded
+    }
+
     private func loadChatModelAsync(item: ModelCatalogItem, persistSelection: Bool) async {
         guard item.kind == .chat else { return }
         guard let path = modelPathIfInstalled(item) else {
@@ -764,6 +833,16 @@ class GlobalViewModel {
         notes.filter { note in
             !isNoteEmbeddingFresh(note)
         }
+    }
+
+    private func waitForIndexingToFinish(before deadline: Date) async -> Bool {
+        while isIndexing {
+            if Date() > deadline {
+                return false
+            }
+            try? await Task.sleep(nanoseconds: 200_000_000)
+        }
+        return true
     }
 
     private func indexSingleNote(note: Note, modelContext: ModelContext) async throws {

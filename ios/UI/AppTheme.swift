@@ -1,8 +1,8 @@
 import SwiftUI
 
 enum AppTheme {
-    static let primary = Color(hex: "#0F766E")
-    static let primaryDark = Color(hex: "#0B5D57")
+    static let primary = Color(hex: "#7C3AED")
+    static let primaryDark = Color(hex: "#6D28D9")
     static let secondary = Color(hex: "#1D4ED8")
     static let backgroundLight = Color(hex: "#EFF7F6")
     static let surfaceLight = Color(hex: "#F8FAFC")
@@ -10,7 +10,8 @@ enum AppTheme {
     static let secondaryText = Color(hex: "#64748B")
     static let greenSuccess = Color(hex: "#22C55E")
     static let redError = Color(hex: "#DC2626")
-    static let bubbleAi = Color(hex: "#DDF6F2")
+    static let bubbleAi = Color(hex: "#D1D5DB")
+    static let bubbleUser = Color(hex: "#C4B5FD")
     static let card = Color(hex: "#121720")
     static let cardBorder = Color(hex: "#2A3342")
 }

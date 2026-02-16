@@ -230,6 +230,7 @@ private struct ModelRow: View {
     let onLoad: () -> Void
     let onReload: () -> Void
     let onDelete: () -> Void
+    @State private var showingDeleteConfirm = false
 
     var body: some View {
         HStack(alignment: .center, spacing: 12) {
@@ -253,19 +254,28 @@ private struct ModelRow: View {
                     Button("Reload") { onReload() }
                         .buttonStyle(.bordered)
                         .disabled(isBusy)
+
+                    if isInstalled {
+                        Button(role: .destructive) {
+                            showingDeleteConfirm = true
+                        } label: {
+                            Image(systemName: "trash")
+                        }
+                        .buttonStyle(.bordered)
+                        .disabled(isBusy)
+                    }
                 }
             } else {
                 actionView
             }
         }
-        .contextMenu {
-            if isInstalled {
-                Button(role: .destructive) {
-                    onDelete()
-                } label: {
-                    Label("Delete", systemImage: "trash")
-                }
+        .alert("Delete Model?", isPresented: $showingDeleteConfirm) {
+            Button("Cancel", role: .cancel) {}
+            Button("Delete", role: .destructive) {
+                onDelete()
             }
+        } message: {
+            Text("This will remove \(item.name) from local storage.")
         }
     }
 
@@ -307,6 +317,14 @@ private struct ModelRow: View {
                     Button("Reload") { onReload() }
                         .buttonStyle(.bordered)
                         .disabled(isBusy)
+
+                    Button(role: .destructive) {
+                        showingDeleteConfirm = true
+                    } label: {
+                        Image(systemName: "trash")
+                    }
+                    .buttonStyle(.bordered)
+                    .disabled(isBusy)
                 }
             } else {
                 Button("Get") { onGet() }

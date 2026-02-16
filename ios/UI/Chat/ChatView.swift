@@ -59,13 +59,6 @@ struct ChatView: View {
                     Image(systemName: "square.and.pencil")
                 }
             }
-
-            ToolbarItemGroup(placement: .keyboard) {
-                Spacer()
-                Button("Done") {
-                    isInputFocused = false
-                }
-            }
         }
         .sheet(isPresented: $showingSessionSheet) {
             ChatSessionsSheet(vm: vm, modelContext: modelContext)
@@ -112,6 +105,10 @@ struct ChatView: View {
                 .padding(.bottom, 4)
             }
             .scrollDismissesKeyboard(.interactively)
+            .contentShape(Rectangle())
+            .simultaneousGesture(TapGesture().onEnded {
+                isInputFocused = false
+            })
             .onChange(of: vm.chatMessages.count) {
                 if let lastId = vm.chatMessages.last?.id {
                     withAnimation {

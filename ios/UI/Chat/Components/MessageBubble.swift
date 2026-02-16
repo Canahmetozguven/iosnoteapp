@@ -34,12 +34,16 @@ struct MessageBubble: View {
             .padding(12)
             .background(backgroundColor)
             .clipShape(RoundedRectangle(cornerRadius: 16))
+            .overlay(
+                RoundedRectangle(cornerRadius: 16)
+                    .stroke(Color.black.opacity(0.06), lineWidth: 1)
+            )
 
             if message.role != "user" { Spacer(minLength: 44) }
         }
     }
 
     private var backgroundColor: Color {
-        message.role == "user" ? AppTheme.primary.opacity(0.16) : AppTheme.bubbleAi
+        message.role == "user" ? AppTheme.bubbleUser : AppTheme.bubbleAi
     }
 }
