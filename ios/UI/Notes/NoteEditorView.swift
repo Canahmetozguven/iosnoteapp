@@ -77,13 +77,18 @@ struct NoteEditorView: View {
             .padding(.horizontal)
             .disabled(aiController.hasPendingPreview)
 
-            if let scope = aiController.scopeDescription {
+            if !vm.isChatModelLoaded {
+                Text("Load a chat model in Settings to enable in-note AI actions.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal)
+            } else if let scope = aiController.scopeDescription {
                 Text(scope)
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .padding(.horizontal)
-            } else if !vm.isChatModelLoaded {
-                Text("Load a chat model in Settings to enable in-note AI actions.")
+            } else {
+                Text(selectionScopeHint)
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .padding(.horizontal)
@@ -204,6 +209,14 @@ struct NoteEditorView: View {
                     aiController.stop(llamaContext: vm.llamaContext)
                 }
                 .buttonStyle(.bordered)
+            } else if aiController.canResume {
+                Button("Resume") {
+                    _ = aiController.resume(
+                        llamaContext: vm.llamaContext,
+                        isAppGenerating: vm.isGenerating
+                    )
+                }
+                .buttonStyle(.bordered)
             }
 
             Button("Reject", role: .destructive) {
@@ -280,6 +293,14 @@ struct NoteEditorView: View {
 
     private var displayedDiffLines: [NoteEditorAIController.PreviewDiffLine] {
         aiController.previewDiffLines(hideUnchanged: hideUnchangedDiffLines)
+    }
+
+    private var selectionScopeHint: String {
+        let safe = clampedSelection(editorSelection, in: note.content)
+        if safe.length > 0 {
+            return "Selection detected: AI actions will target only highlighted text."
+        }
+        return "No selection: Auto-Complete uses cursor; other actions process the full note."
     }
 
     private func diffLineRow(_ line: NoteEditorAIController.PreviewDiffLine) -> some View {

@@ -124,6 +124,10 @@ final class NoteEditorAIController {
         activeAction != nil
     }
 
+    var canResume: Bool {
+        hasPendingPreview && !isGenerating
+    }
+
     var canAcceptPreview: Bool {
         !previewText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
@@ -216,40 +220,45 @@ final class NoteEditorAIController {
             return false
         }
         let prompt = buildPrompt(action: action, snapshot: currentSnapshot, style: outputStyle)
-        generationTask = Task { @MainActor in
-            defer {
-                isGenerating = false
-                generationTask = nil
-            }
+        runGeneration(
+            prompt: prompt,
+            appendToExistingPreview: false,
+            llamaContext: llamaContext
+        )
 
-            let messages = [
-                [
-                    "role": "system",
-                    "content": "You are an in-note writing assistant. Return plain text only with no markdown code fences."
-                ],
-                [
-                    "role": "user",
-                    "content": prompt
-                ]
-            ]
+        return true
+    }
 
-            let templatedPrompt = await llamaContext.applyTemplate(messages: messages)
-
-            do {
-                let stream = await llamaContext.completion(prompt: templatedPrompt)
-                var rawOutput = ""
-                for try await token in stream {
-                    if Task.isCancelled { break }
-                    rawOutput += token
-                    let parsed = parseThinkTags(rawOutput)
-                    previewText = parsed.content
-                    previewThought = parsed.thought ?? ""
-                }
-            } catch {
-                errorMessage = "Generation failed: \(error.localizedDescription)"
-            }
+    @discardableResult
+    func resume(llamaContext: LlamaContext, isAppGenerating: Bool) -> Bool {
+        guard canResume else { return false }
+        guard !isAppGenerating else {
+            errorMessage = "Another generation is already running."
+            return false
+        }
+        guard let action = activeAction, let snapshot else {
+            errorMessage = "No preview session to resume."
+            return false
         }
 
+        let currentDraft = previewText
+        guard !currentDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            errorMessage = "Nothing to resume yet."
+            return false
+        }
+
+        errorMessage = nil
+        let prompt = buildResumePrompt(
+            action: action,
+            snapshot: snapshot,
+            style: outputStyle,
+            partialDraft: currentDraft
+        )
+        runGeneration(
+            prompt: prompt,
+            appendToExistingPreview: true,
+            llamaContext: llamaContext
+        )
         return true
     }
 
@@ -408,6 +417,60 @@ final class NoteEditorAIController {
         return text.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
     }
 
+    private func runGeneration(
+        prompt: String,
+        appendToExistingPreview: Bool,
+        llamaContext: LlamaContext
+    ) {
+        generationTask?.cancel()
+        isGenerating = true
+        let existingPreview = appendToExistingPreview ? previewText : ""
+        let existingThought = appendToExistingPreview ? previewThought : ""
+        if !appendToExistingPreview {
+            previewText = ""
+            previewThought = ""
+        }
+
+        generationTask = Task { @MainActor in
+            defer {
+                isGenerating = false
+                generationTask = nil
+            }
+
+            let messages = [
+                [
+                    "role": "system",
+                    "content": "You are an in-note writing assistant. Return plain text only with no markdown code fences."
+                ],
+                [
+                    "role": "user",
+                    "content": prompt
+                ]
+            ]
+
+            let templatedPrompt = await llamaContext.applyTemplate(messages: messages)
+
+            do {
+                let stream = await llamaContext.completion(prompt: templatedPrompt)
+                var rawOutput = ""
+                for try await token in stream {
+                    if Task.isCancelled { break }
+                    rawOutput += token
+                    let parsed = parseThinkTags(rawOutput)
+                    if appendToExistingPreview {
+                        previewText = existingPreview + parsed.content
+                        previewThought = mergeThought(existing: existingThought, new: parsed.thought)
+                    } else {
+                        previewText = parsed.content
+                        previewThought = parsed.thought ?? ""
+                    }
+                }
+            } catch {
+                errorMessage = "Generation failed: \(error.localizedDescription)"
+            }
+        }
+    }
+
     private func buildPrompt(action: NoteAIAction, snapshot: Snapshot, style: NoteAIOutputStyle) -> String {
         let styleRule = styleInstruction(for: action, style: style)
 
@@ -483,6 +546,38 @@ final class NoteEditorAIController {
             \(inputText(for: snapshot))
             """
         }
+    }
+
+    private func buildResumePrompt(
+        action: NoteAIAction,
+        snapshot: Snapshot,
+        style: NoteAIOutputStyle,
+        partialDraft: String
+    ) -> String {
+        let originalTask = buildPrompt(action: action, snapshot: snapshot, style: style)
+        return """
+        Task: Continue the in-note draft below for the same editing request.
+        Rules:
+        - Return only additional continuation text.
+        - Do not repeat content already in CURRENT_DRAFT.
+        - Keep language, style, and tone consistent.
+        - Do not add explanations.
+
+        ORIGINAL_REQUEST:
+        \(originalTask)
+
+        CURRENT_DRAFT:
+        \(partialDraft)
+        """
+    }
+
+    private func mergeThought(existing: String, new: String?) -> String {
+        let trimmedExisting = existing.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedNew = (new ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+
+        if trimmedExisting.isEmpty { return trimmedNew }
+        if trimmedNew.isEmpty { return trimmedExisting }
+        return "\(trimmedExisting)\n\(trimmedNew)"
     }
 
     private func inputText(for snapshot: Snapshot) -> String {
