@@ -5,6 +5,7 @@ struct DriveFile: Codable, Hashable {
     var name: String?
     var createdTime: String?
     var size: String?
+    var mimeType: String?
 }
 
 enum DriveAPIError: Error {
@@ -65,6 +66,20 @@ final class DriveAPIClient {
         return try JSONDecoder().decode(Wrapper.self, from: data).files
     }
 
+    func listFiles(inFolderId folderId: String, accessToken: String) async throws -> [DriveFile] {
+        let q = "'\(folderId)' in parents and trashed=false and mimeType != 'application/vnd.google-apps.folder'"
+        let fields = "files(id,name,createdTime,size,mimeType)"
+        let url = URL(string: "https://www.googleapis.com/drive/v3/files?q=\(q.urlQueryEncoded())&orderBy=modifiedTime%20desc&fields=\(fields.urlQueryEncoded())")!
+        var req = URLRequest(url: url)
+        req.setValue("Bearer \(accessToken)", forHTTPHeaderField: "Authorization")
+        let (data, resp) = try await session.data(for: req)
+        guard let http = resp as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
+            throw DriveAPIError.badResponse
+        }
+        struct Wrapper: Codable { var files: [DriveFile] }
+        return try JSONDecoder().decode(Wrapper.self, from: data).files
+    }
+
     func uploadResumable(fileURL: URL, fileName: String, mimeType: String, folderId: String, accessToken: String) async throws -> DriveFile {
         let startURL = URL(string: "https://www.googleapis.com/upload/drive/v3/files?uploadType=resumable")!
         var startReq = URLRequest(url: startURL)
@@ -113,4 +128,3 @@ private extension String {
         addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? self
     }
 }
-

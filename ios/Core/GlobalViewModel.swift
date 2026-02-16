@@ -28,6 +28,7 @@ class GlobalViewModel {
     enum RAGStatus: Equatable {
         case ready
         case disabledNoEmbeddingModel
+        case indexing
         case noIndexedNotes
         case usedContext(count: Int)
         case failed(String)
@@ -292,7 +293,17 @@ class GlobalViewModel {
             var ragContext: [Note] = []
 
             if isEmbeddingModelLoaded {
-                let eligibleNotes = notes.filter { isNoteEmbeddingFresh($0) }
+                var eligibleNotes = notes.filter { isNoteEmbeddingFresh($0) }
+                if eligibleNotes.isEmpty && !notes.isEmpty {
+                    self.ragStatus = .indexing
+                    do {
+                        _ = try await ensureIndexedForRAG(notes: notes, modelContext: modelContext)
+                        eligibleNotes = notes.filter { isNoteEmbeddingFresh($0) }
+                    } catch {
+                        self.ragStatus = .failed(error.localizedDescription)
+                    }
+                }
+
                 if eligibleNotes.isEmpty {
                     self.ragStatus = .noIndexedNotes
                 } else {
@@ -366,6 +377,8 @@ class GlobalViewModel {
             return nil
         case .disabledNoEmbeddingModel:
             return "RAG is disabled: load an embedding model."
+        case .indexing:
+            return "RAG is preparing note index..."
         case .noIndexedNotes:
             return "No indexed notes for the active embedding model."
         case .usedContext(let count):
@@ -416,6 +429,19 @@ class GlobalViewModel {
     func handleNoteEdited(_ note: Note, modelContext: ModelContext) {
         markNoteEmbeddingStale(note)
         scheduleAutoIndex(for: note, modelContext: modelContext)
+    }
+
+    func startAutoIndexIfNeeded(notes: [Note], modelContext: ModelContext) {
+        guard isEmbeddingModelLoaded, !isIndexing else { return }
+        guard !notesNeedingEmbedding(notes).isEmpty else { return }
+
+        Task { @MainActor in
+            do {
+                _ = try await ensureIndexedForRAG(notes: notes, modelContext: modelContext)
+            } catch {
+                // Do not surface hard error for automatic background refresh.
+            }
+        }
     }
 
     func indexedCountForActiveEmbedding(notes: [Note]) -> Int {
@@ -701,6 +727,42 @@ class GlobalViewModel {
                 // Silent for auto-index; user can always trigger full re-index from Settings.
             }
             self.pendingAutoIndexTasks[note.id] = nil
+        }
+    }
+
+    private func ensureIndexedForRAG(notes: [Note], modelContext: ModelContext) async throws -> Int {
+        guard isEmbeddingModelLoaded, !isIndexing else { return 0 }
+        let candidates = notesNeedingEmbedding(notes)
+        guard !candidates.isEmpty else { return 0 }
+
+        isIndexing = true
+        indexingProgress = 0.0
+        indexingStatus = "Auto-indexing notes..."
+        defer { isIndexing = false }
+
+        var indexed = 0
+        var failed = 0
+        let total = candidates.count
+
+        for note in candidates {
+            do {
+                try await indexSingleNote(note: note, modelContext: modelContext)
+                indexed += 1
+            } catch {
+                failed += 1
+            }
+            indexingProgress = Double(indexed + failed) / Double(total)
+        }
+
+        indexingStatus = nil
+        indexingProgress = 0.0
+        try? modelContext.save()
+        return indexed
+    }
+
+    private func notesNeedingEmbedding(_ notes: [Note]) -> [Note] {
+        notes.filter { note in
+            !isNoteEmbeddingFresh(note)
         }
     }
 

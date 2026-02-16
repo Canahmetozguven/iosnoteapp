@@ -169,46 +169,47 @@ struct SettingsView: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
-                
-                Section("RAG Indexing") {
+
+                Section("RAG") {
                     let indexedCount = vm.indexedCountForActiveEmbedding(notes: notes)
-                    
+
                     HStack {
                         Text("Fresh embeddings")
                         Spacer()
                         Text("\(indexedCount)/\(notes.count) indexed")
                             .foregroundStyle(.secondary)
                     }
-                    
+
                     if vm.indexingProgress > 0 && vm.indexingProgress < 1.0 {
                         ProgressView(value: vm.indexingProgress)
                     }
-                    
+
                     if let status = vm.indexingStatus {
                         Text(status)
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
-                    
-                    Button {
-                        vm.indexAllNotes(notes: notes, modelContext: modelContext)
-                    } label: {
-                        HStack {
-                            Image(systemName: "arrow.trianglehead.2.clockwise.rotate.90")
-                            Text("Index All Notes")
-                        }
-                    }
-                    .disabled(!vm.isEmbeddingModelLoaded || vm.isBusy || notes.isEmpty)
-                    
-                    Text("Generates embeddings for RAG-powered chat. Required for context-aware responses.")
+
+                    Text("Indexing is automatic. Notes are re-embedded after edits and when chat needs fresh context.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
-                
+
             }
+            .listStyle(.insetGrouped)
+            .scrollContentBackground(.hidden)
+            .background(
+                LinearGradient(
+                    colors: [Color(.systemGroupedBackground), Color(.secondarySystemGroupedBackground)],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+                .ignoresSafeArea()
+            )
             .navigationTitle("Settings")
             .onAppear {
                 vm.bootstrapIfNeeded(modelContext: modelContext)
+                vm.startAutoIndexIfNeeded(notes: notes, modelContext: modelContext)
             }
             .sheet(isPresented: $showingAddCustomModel) {
                 AddCustomModelSheet(vm: vm)

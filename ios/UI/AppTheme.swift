@@ -1,16 +1,18 @@
 import SwiftUI
 
 enum AppTheme {
-    static let primary = Color(hex: "#6650A5")
-    static let primaryDark = Color(hex: "#513F84")
-    static let secondary = Color(hex: "#625B71")
-    static let backgroundLight = Color(hex: "#F7F6F7")
-    static let surfaceLight = Color(hex: "#FFFFFF")
-    static let onSurfaceLight = Color(hex: "#1C1B1F")
-    static let secondaryText = Color(hex: "#A8A5B1")
+    static let primary = Color(hex: "#0F766E")
+    static let primaryDark = Color(hex: "#0B5D57")
+    static let secondary = Color(hex: "#1D4ED8")
+    static let backgroundLight = Color(hex: "#EFF7F6")
+    static let surfaceLight = Color(hex: "#F8FAFC")
+    static let onSurfaceLight = Color(hex: "#0F172A")
+    static let secondaryText = Color(hex: "#64748B")
     static let greenSuccess = Color(hex: "#22C55E")
     static let redError = Color(hex: "#DC2626")
-    static let bubbleAi = Color(hex: "#EADCF5")
+    static let bubbleAi = Color(hex: "#DDF6F2")
+    static let card = Color(hex: "#121720")
+    static let cardBorder = Color(hex: "#2A3342")
 }
 
 extension Color {
@@ -24,4 +26,3 @@ extension Color {
         self.init(red: r, green: g, blue: b)
     }
 }
-

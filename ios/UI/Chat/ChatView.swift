@@ -8,6 +8,7 @@ struct ChatView: View {
 
     @State private var inputText = ""
     @State private var showingSessionSheet = false
+    @FocusState private var isInputFocused: Bool
 
     var body: some View {
         VStack(spacing: 0) {
@@ -18,7 +19,7 @@ struct ChatView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(.horizontal, 14)
                     .padding(.vertical, 8)
-                    .background(AppTheme.surfaceLight)
+                    .background(Color(.secondarySystemBackground).opacity(0.9))
             }
 
             if !vm.isChatModelLoaded {
@@ -28,7 +29,18 @@ struct ChatView: View {
                 composer
             }
         }
-        .background(AppTheme.backgroundLight.ignoresSafeArea())
+        .background(
+            LinearGradient(
+                colors: [Color(.systemGroupedBackground), Color(.secondarySystemGroupedBackground)],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+            .ignoresSafeArea()
+        )
+        .contentShape(Rectangle())
+        .onTapGesture {
+            isInputFocused = false
+        }
         .navigationTitle(vm.activeSession()?.title ?? "Chat")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
@@ -47,16 +59,26 @@ struct ChatView: View {
                     Image(systemName: "square.and.pencil")
                 }
             }
+
+            ToolbarItemGroup(placement: .keyboard) {
+                Spacer()
+                Button("Done") {
+                    isInputFocused = false
+                }
+            }
         }
         .sheet(isPresented: $showingSessionSheet) {
-            ChatSessionsSheet(
-                vm: vm,
-                modelContext: modelContext
-            )
-            .presentationDetents([.medium, .large])
+            ChatSessionsSheet(vm: vm, modelContext: modelContext)
+                .presentationDetents([.medium, .large])
         }
         .onAppear {
             vm.bootstrapIfNeeded(modelContext: modelContext)
+            vm.startAutoIndexIfNeeded(notes: notes, modelContext: modelContext)
+        }
+        .onChange(of: vm.isEmbeddingModelLoaded) {
+            if vm.isEmbeddingModelLoaded {
+                vm.startAutoIndexIfNeeded(notes: notes, modelContext: modelContext)
+            }
         }
     }
 
@@ -89,6 +111,7 @@ struct ChatView: View {
                 .padding(.top, 10)
                 .padding(.bottom, 4)
             }
+            .scrollDismissesKeyboard(.interactively)
             .onChange(of: vm.chatMessages.count) {
                 if let lastId = vm.chatMessages.last?.id {
                     withAnimation {
@@ -111,9 +134,10 @@ struct ChatView: View {
                 .lineLimit(1...4)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 10)
-                .background(Color.white)
+                .background(Color(.tertiarySystemBackground))
                 .clipShape(RoundedRectangle(cornerRadius: 14))
                 .disabled(vm.isGenerating)
+                .focused($isInputFocused)
 
             if vm.isGenerating {
                 Button {
@@ -140,13 +164,14 @@ struct ChatView: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
-        .background(AppTheme.surfaceLight)
+        .background(Color(.secondarySystemBackground).opacity(0.95))
     }
 
     private func sendMessage() {
         let text = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
         inputText = ""
+        isInputFocused = false
         vm.sendMessage(text: text, notes: notes, modelContext: modelContext)
     }
 }

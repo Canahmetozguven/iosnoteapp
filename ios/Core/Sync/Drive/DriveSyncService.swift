@@ -101,6 +101,18 @@ final class DriveSyncService {
         }
     }
 
+    func listFilesInSynapsFolder() async throws -> [DriveFile] {
+        guard auth.isConnected else {
+            throw DriveAPIError.notAuthenticated
+        }
+        await auth.refreshTokenIfNeeded()
+        guard let token = auth.accessToken else {
+            throw DriveAPIError.notAuthenticated
+        }
+        let folderId = try await ensureFolderId(accessToken: token)
+        return try await api.listFiles(inFolderId: folderId, accessToken: token)
+    }
+
     private func ensureFolderId(accessToken: String) async throws -> String {
         if let cached = defaults.string(forKey: Key.folderId), !cached.isEmpty {
             return cached

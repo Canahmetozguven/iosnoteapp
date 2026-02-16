@@ -81,3 +81,23 @@
 - `ios/Core/Sync/Backup/ExportModels.swift`
 - `ios/Core/Sync/Backup/BackupExporter.swift`
 - `ios/Core/Sync/Backup/BackupImporter.swift`
+
+## Follow-up Fixes (Post-implementation QA)
+- Fixed RAG reliability for existing notes by adding auto catch-up indexing:
+  - Chat now auto-indexes stale/missing embeddings before retrieval when needed.
+  - Added background auto-index trigger on Chat/Settings appear when embedding model is loaded.
+  - Added RAG status state for indexing progress (`RAG is preparing note index...`).
+- Fixed Chat keyboard dismissal:
+  - Added keyboard toolbar `Done` action.
+  - Added tap-to-dismiss behavior and interactive scroll keyboard dismissal.
+- Reduced chat “too white” appearance:
+  - Replaced flat white surfaces with system grouped gradients and adaptive backgrounds.
+- Removed manual indexing controls from Settings:
+  - Deleted manual “Index All Notes” action from UI.
+  - Kept automatic indexing status and indexed-count visibility.
+- Made Settings visually cooler:
+  - Added adaptive grouped gradient background and refreshed section styling.
+- Fixed Files tab behavior for Drive:
+  - Files screen now shows both Drive files and Local files.
+  - Added Drive listing via `DriveSyncService` + `DriveAPIClient` (`listFilesInSynapsFolder` / `listFiles`).
+  - Added formatted size/date metadata and refreshable loading state.
