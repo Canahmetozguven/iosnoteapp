@@ -13,9 +13,9 @@ struct MessageBubble: View {
                     DisclosureGroup("Thinking Process") {
                         Text(thought)
                             .font(.caption)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(.white.opacity(0.85))
                     }
-                    .tint(.gray)
+                    .tint(.white.opacity(0.85))
                 }
 
                 if message.content.isEmpty && message.role == "assistant" {
@@ -24,10 +24,11 @@ struct MessageBubble: View {
                             .scaleEffect(0.7)
                         Text("Thinking...")
                             .font(.caption)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(.white.opacity(0.85))
                     }
                 } else {
                     Text(message.content)
+                        .foregroundStyle(.white)
                         .textSelection(.enabled)
                 }
             }
@@ -36,7 +37,7 @@ struct MessageBubble: View {
             .clipShape(RoundedRectangle(cornerRadius: 16))
             .overlay(
                 RoundedRectangle(cornerRadius: 16)
-                    .stroke(Color.black.opacity(0.06), lineWidth: 1)
+                    .stroke(Color.white.opacity(0.08), lineWidth: 1)
             )
 
             if message.role != "user" { Spacer(minLength: 44) }

@@ -10,8 +10,8 @@ enum AppTheme {
     static let secondaryText = Color(hex: "#64748B")
     static let greenSuccess = Color(hex: "#22C55E")
     static let redError = Color(hex: "#DC2626")
-    static let bubbleAi = Color(hex: "#D1D5DB")
-    static let bubbleUser = Color(hex: "#C4B5FD")
+    static let bubbleAi = Color(hex: "#2B3341")
+    static let bubbleUser = Color(hex: "#5B21B6")
     static let card = Color(hex: "#121720")
     static let cardBorder = Color(hex: "#2A3342")
 }

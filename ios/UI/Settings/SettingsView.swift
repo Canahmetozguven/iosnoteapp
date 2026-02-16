@@ -246,28 +246,14 @@ private struct ModelRow: View {
 
             Spacer()
 
-            if isActive {
-                HStack(spacing: 8) {
-                    Image(systemName: "checkmark.circle.fill")
-                        .foregroundStyle(AppTheme.greenSuccess)
+            statusIndicator
 
-                    Button("Reload") { onReload() }
-                        .buttonStyle(.bordered)
-                        .disabled(isBusy)
-
-                    if isInstalled {
-                        Button(role: .destructive) {
-                            showingDeleteConfirm = true
-                        } label: {
-                            Image(systemName: "trash")
-                        }
-                        .buttonStyle(.bordered)
-                        .disabled(isBusy)
-                    }
-                }
-            } else {
-                actionView
+            Menu {
+                actionMenuContent
+            } label: {
+                Label("Actions", systemImage: "ellipsis.circle")
             }
+            .buttonStyle(.bordered)
         }
         .alert("Delete Model?", isPresented: $showingDeleteConfirm) {
             Button("Cancel", role: .cancel) {}
@@ -280,55 +266,55 @@ private struct ModelRow: View {
     }
 
     @ViewBuilder
-    private var actionView: some View {
+    private var statusIndicator: some View {
         switch downloadState {
         case .downloading(let progress, _, _):
-            Button {
-                onCancel()
-            } label: {
-                Text("\(Int(progress * 100))%")
-                    .monospacedDigit()
+            Text("\(Int(progress * 100))%")
+                .font(.caption)
+                .monospacedDigit()
+                .foregroundStyle(.secondary)
+        case .queued:
+            Text("Queued")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        default:
+            if isActive {
+                Image(systemName: "checkmark.circle.fill")
+                    .foregroundStyle(AppTheme.greenSuccess)
             }
-            .buttonStyle(.bordered)
+        }
+    }
+
+    @ViewBuilder
+    private var actionMenuContent: some View {
+        switch downloadState {
+        case .downloading(let progress, _, _):
+            Button("Cancel Download (\(Int(progress * 100))%)") { onCancel() }
 
         case .queued:
-            Button {
-                onCancel()
-            } label: {
-                Text("Queued")
-            }
-            .buttonStyle(.bordered)
+            Button("Cancel Download") { onCancel() }
 
         case .paused:
-            Button("Get") { onGet() }
-                .buttonStyle(.bordered)
+            Button("Resume Download") { onGet() }
 
         case .failed:
-            Button("Retry") { onGet() }
-                .buttonStyle(.bordered)
+            Button("Retry Download") { onGet() }
 
         case .completed, .notStarted:
             if isInstalled {
-                HStack(spacing: 8) {
-                    Button("Load") { onLoad() }
-                        .buttonStyle(.borderedProminent)
+                if !isActive {
+                    Button("Load Model") { onLoad() }
                         .disabled(isBusy)
-
-                    Button("Reload") { onReload() }
-                        .buttonStyle(.bordered)
-                        .disabled(isBusy)
-
-                    Button(role: .destructive) {
-                        showingDeleteConfirm = true
-                    } label: {
-                        Image(systemName: "trash")
-                    }
-                    .buttonStyle(.bordered)
-                    .disabled(isBusy)
                 }
+                Button("Reload Model") { onReload() }
+                    .disabled(isBusy)
+                Button("Delete Model", role: .destructive) {
+                    showingDeleteConfirm = true
+                }
+                .disabled(isBusy)
             } else {
-                Button("Get") { onGet() }
-                    .buttonStyle(.bordered)
+                Button("Get Model") { onGet() }
+                    .disabled(isBusy)
             }
         }
     }

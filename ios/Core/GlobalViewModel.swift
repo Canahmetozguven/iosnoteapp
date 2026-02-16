@@ -55,6 +55,9 @@ class GlobalViewModel {
     var modelError: String? = nil
     var ragStatus: RAGStatus = .ready
     var retrievedContext: [Note] = []
+    var lastRAGPreparedNotesCount: Int = 0
+    var lastRAGEligibleNotesCount: Int = 0
+    var lastRAGRetrievedCount: Int = 0
 
     // Chat state (session-aware and persisted in SwiftData).
     var sessions: [ChatSession] = []
@@ -290,6 +293,9 @@ class GlobalViewModel {
         isGenerating = true
         ragStatus = .ready
         retrievedContext = []
+        lastRAGPreparedNotesCount = notes.count
+        lastRAGEligibleNotesCount = 0
+        lastRAGRetrievedCount = 0
 
         generationTask = Task { @MainActor in
             var ragContext: [Note] = []
@@ -298,21 +304,38 @@ class GlobalViewModel {
                 let ragReady = await ensureRAGReadyBeforeSend(notes: notes, modelContext: modelContext)
                 if ragReady, isEmbeddingModelLoaded {
                     let eligibleNotes = notes.filter { isNoteEmbeddingFresh($0) }
+                    self.lastRAGEligibleNotesCount = eligibleNotes.count
                     if eligibleNotes.isEmpty {
                         self.ragStatus = .noIndexedNotes
                     } else {
                         do {
                             let queryEmbedding = try await llamaContext.embedWithEmbeddingModel(text: userMessageText)
+                            guard !queryEmbedding.isEmpty else {
+                                self.ragStatus = .failed("empty query embedding")
+                                throw LlamaError.noEmbeddings
+                            }
+                            let compatibleNotes = eligibleNotes.filter {
+                                ($0.embedding?.count ?? 0) == queryEmbedding.count
+                            }
+                            guard !compatibleNotes.isEmpty else {
+                                self.ragStatus = .failed("embedding dimension mismatch")
+                                throw LlamaError.noEmbeddings
+                            }
                             let foundContext = vectorSearchService.findSimilarNotes(
                                 queryEmbedding: queryEmbedding,
-                                notes: eligibleNotes,
+                                notes: compatibleNotes,
                                 topK: 3
                             )
                             ragContext = foundContext
                             self.retrievedContext = foundContext
+                            self.lastRAGRetrievedCount = foundContext.count
                             self.ragStatus = .usedContext(count: foundContext.count)
                         } catch {
-                            self.ragStatus = .failed(error.localizedDescription)
+                            if case .failed = self.ragStatus {
+                                // Keep specific status set above.
+                            } else {
+                                self.ragStatus = .failed(error.localizedDescription)
+                            }
                         }
                     }
                 }
@@ -383,6 +406,13 @@ class GlobalViewModel {
         case .failed(let message):
             return "RAG failed: \(message)"
         }
+    }
+
+    func ragDebugText() -> String? {
+        if lastRAGPreparedNotesCount == 0 && lastRAGEligibleNotesCount == 0 && lastRAGRetrievedCount == 0 {
+            return nil
+        }
+        return "RAG notes: prepared \(lastRAGPreparedNotesCount), eligible \(lastRAGEligibleNotesCount), retrieved \(lastRAGRetrievedCount)"
     }
 
     // MARK: - Indexing (RAG)
@@ -469,19 +499,26 @@ class GlobalViewModel {
                 ragStatus = .preparingIndex
                 let finished = await waitForIndexingToFinish(before: deadline)
                 if !finished {
-                    ragStatus = .timedOut
-                    return false
+                    let fallbackEligible = notes.filter { isNoteEmbeddingFresh($0) }
+                    if fallbackEligible.isEmpty {
+                        ragStatus = .timedOut
+                        return false
+                    }
+                    return true
                 }
             }
 
             if !notesNeedingEmbedding(notes).isEmpty {
                 ragStatus = .preparingIndex
-                _ = try await ensureIndexedForRAG(notes: notes, modelContext: modelContext)
+                _ = try await ensureIndexedForRAG(notes: notes, modelContext: modelContext, deadline: deadline)
             }
 
             if timedOut() {
-                ragStatus = .timedOut
-                return false
+                let fallbackEligible = notes.filter { isNoteEmbeddingFresh($0) }
+                if fallbackEligible.isEmpty {
+                    ragStatus = .timedOut
+                    return false
+                }
             }
 
             return true
@@ -799,7 +836,7 @@ class GlobalViewModel {
         }
     }
 
-    private func ensureIndexedForRAG(notes: [Note], modelContext: ModelContext) async throws -> Int {
+    private func ensureIndexedForRAG(notes: [Note], modelContext: ModelContext, deadline: Date? = nil) async throws -> Int {
         guard isEmbeddingModelLoaded, !isIndexing else { return 0 }
         let candidates = notesNeedingEmbedding(notes)
         guard !candidates.isEmpty else { return 0 }
@@ -814,6 +851,7 @@ class GlobalViewModel {
         let total = candidates.count
 
         for note in candidates {
+            if let deadline, Date() > deadline { break }
             do {
                 try await indexSingleNote(note: note, modelContext: modelContext)
                 indexed += 1

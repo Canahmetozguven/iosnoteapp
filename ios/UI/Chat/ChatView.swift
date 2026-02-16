@@ -13,13 +13,20 @@ struct ChatView: View {
     var body: some View {
         VStack(spacing: 0) {
             if let ragStatusText = vm.ragStatusText() {
-                Text(ragStatusText)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 8)
-                    .background(Color(.secondarySystemBackground).opacity(0.9))
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(ragStatusText)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    if let debugLine = vm.ragDebugText() {
+                        Text(debugLine)
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 8)
+                .background(Color(.secondarySystemBackground).opacity(0.9))
             }
 
             if !vm.isChatModelLoaded {
@@ -131,7 +138,8 @@ struct ChatView: View {
                 .lineLimit(1...4)
                 .padding(.horizontal, 12)
                 .padding(.vertical, 10)
-                .background(Color(.tertiarySystemBackground))
+                .background(AppTheme.cardBorder.opacity(0.95))
+                .foregroundStyle(.white)
                 .clipShape(RoundedRectangle(cornerRadius: 14))
                 .disabled(vm.isGenerating)
                 .focused($isInputFocused)
@@ -161,7 +169,7 @@ struct ChatView: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
-        .background(Color(.secondarySystemBackground).opacity(0.95))
+        .background(AppTheme.card.opacity(0.95))
     }
 
     private func sendMessage() {
