@@ -6,6 +6,10 @@ struct ModelCatalogItem: Codable, Identifiable, Hashable {
     var name: String
     var subtitle: String?
     var filename: String
+    var auxiliaryFilename: String?
+    var auxiliaryURL: String?
+    var auxiliarySha256: String?
+    var modality: String?
     var url: String
     var sizeBytes: Int64?
     var sha256: String?
@@ -17,4 +21,3 @@ struct ModelCatalog: Codable {
     var version: Int
     var items: [ModelCatalogItem]
 }
-

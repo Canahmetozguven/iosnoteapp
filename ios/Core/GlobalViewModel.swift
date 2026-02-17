@@ -2,6 +2,7 @@ import Foundation
 import SwiftUI
 import SwiftData
 import CryptoKit
+import UniformTypeIdentifiers
 
 @MainActor
 @Observable
@@ -10,12 +11,14 @@ class GlobalViewModel {
     let downloads = ModelDownloadManager.shared.viewModel()
     private let downloadManager = ModelDownloadManager.shared
     let driveSync = DriveSyncService()
+    private let knowledgeIngestionService = KnowledgeIngestionService()
     var llamaContext = LlamaContext()
     let vectorSearchService = VectorSearchService()
 
     private enum PreferenceKey {
         static let activeChatModelId = "active_chat_model_id"
         static let activeEmbeddingModelId = "active_embedding_model_id"
+        static let activeOCRModelId = "active_ocr_model_id"
         static let lowPowerMode = "low_power_mode"
         static let activeChatSessionId = "active_chat_session_id"
     }
@@ -40,25 +43,34 @@ class GlobalViewModel {
 
     var isChatModelLoaded = false
     var isEmbeddingModelLoaded = false
+    var isOCRModelLoaded = false
     var isChatModelLoading = false
     var isEmbeddingModelLoading = false
+    var isOCRModelLoading = false
     var isGenerating = false
     var isIndexing = false
+    var isImportingKnowledge = false
 
     var isBusy: Bool {
-        isChatModelLoading || isEmbeddingModelLoading || isGenerating || isIndexing
+        isChatModelLoading || isEmbeddingModelLoading || isOCRModelLoading || isGenerating || isIndexing || isImportingKnowledge
     }
 
     var currentChatModelId: String? = nil
     var currentEmbeddingModelId: String? = nil
+    var currentOCRModelId: String? = nil
 
     var modelError: String? = nil
     var ragStatus: RAGStatus = .ready
     var retrievedContext: [Note] = []
+    var retrievedKnowledgeContext: [KnowledgeChunk] = []
     var lastRAGPreparedNotesCount: Int = 0
+    var lastRAGPreparedChunksCount: Int = 0
     var lastRAGEligibleNotesCount: Int = 0
+    var lastRAGEligibleChunksCount: Int = 0
     var lastRAGRetrievedCount: Int = 0
     var lastRAGRetrievedTitles: [String] = []
+    var lastRAGRetrievedDocumentTitles: [String] = []
+    var knowledgeImportStatus: String? = nil
 
     // Chat state (session-aware and persisted in SwiftData).
     var sessions: [ChatSession] = []
@@ -82,6 +94,8 @@ class GlobalViewModel {
     private var isModelRehydrateInProgress = false
     private var generationTask: Task<Void, Never>?
     private var pendingAutoIndexTasks: [UUID: Task<Void, Never>] = [:]
+    private var ocrAutoUnloadTask: Task<Void, Never>?
+    private var ocrLastUsedAt: Date?
 
     init() {
         if defaults.object(forKey: PreferenceKey.lowPowerMode) != nil {
@@ -96,6 +110,7 @@ class GlobalViewModel {
         }
         currentChatModelId = defaults.string(forKey: PreferenceKey.activeChatModelId)
         currentEmbeddingModelId = defaults.string(forKey: PreferenceKey.activeEmbeddingModelId)
+        currentOCRModelId = defaults.string(forKey: PreferenceKey.activeOCRModelId)
         if let rawSessionId = defaults.string(forKey: PreferenceKey.activeChatSessionId) {
             activeSessionId = UUID(uuidString: rawSessionId)
         }
@@ -190,6 +205,7 @@ class GlobalViewModel {
         do {
             if currentChatModelId == item.id { unloadChatModel() }
             if currentEmbeddingModelId == item.id { unloadEmbeddingModel() }
+            if currentOCRModelId == item.id { unloadOCRModel() }
             try downloadManager.deleteDownloaded(item)
         } catch {
             modelError = error.localizedDescription
@@ -208,6 +224,12 @@ class GlobalViewModel {
         }
     }
 
+    func loadOCRModel(item: ModelCatalogItem) {
+        Task { @MainActor in
+            await loadOCRModelAsync(item: item, persistSelection: true)
+        }
+    }
+
     func reloadChatModel(item: ModelCatalogItem) {
         Task { @MainActor in
             await unloadChatModelAsync(clearSelection: false)
@@ -222,6 +244,13 @@ class GlobalViewModel {
         }
     }
 
+    func reloadOCRModel(item: ModelCatalogItem) {
+        Task { @MainActor in
+            await unloadOCRModelAsync(clearSelection: false)
+            await loadOCRModelAsync(item: item, persistSelection: true)
+        }
+    }
+
     func unloadChatModel() {
         Task { @MainActor in
             await unloadChatModelAsync(clearSelection: true)
@@ -231,6 +260,12 @@ class GlobalViewModel {
     func unloadEmbeddingModel() {
         Task { @MainActor in
             await unloadEmbeddingModelAsync(clearSelection: true)
+        }
+    }
+
+    func unloadOCRModel() {
+        Task { @MainActor in
+            await unloadOCRModelAsync(clearSelection: true)
         }
     }
 
@@ -255,6 +290,7 @@ class GlobalViewModel {
                modelPathIfInstalled(item) != nil {
                 await loadEmbeddingModelAsync(item: item, persistSelection: false)
             }
+
         }
     }
 
@@ -265,13 +301,20 @@ class GlobalViewModel {
         }
         isChatModelLoaded = false
         isEmbeddingModelLoaded = false
+        isOCRModelLoaded = false
         isChatModelLoading = false
         isEmbeddingModelLoading = false
+        isOCRModelLoading = false
     }
 
     // MARK: - Chat
 
-    func sendMessage(text: String, notes: [Note] = [], modelContext: ModelContext) {
+    func sendMessage(
+        text: String,
+        notes: [Note] = [],
+        knowledgeChunks: [KnowledgeChunk] = [],
+        modelContext: ModelContext
+    ) {
         guard isChatModelLoaded, !isGenerating else { return }
         bootstrapIfNeeded(modelContext: modelContext)
 
@@ -294,37 +337,58 @@ class GlobalViewModel {
         isGenerating = true
         ragStatus = .ready
         retrievedContext = []
+        retrievedKnowledgeContext = []
         lastRAGPreparedNotesCount = notes.count
+        lastRAGPreparedChunksCount = knowledgeChunks.count
         lastRAGEligibleNotesCount = 0
+        lastRAGEligibleChunksCount = 0
         lastRAGRetrievedCount = 0
         lastRAGRetrievedTitles = []
+        lastRAGRetrievedDocumentTitles = []
 
         generationTask = Task { @MainActor in
-            var ragContext: [Note] = []
-            let keywordFallback: () -> [Note] = {
+            var ragNoteContext: [Note] = []
+            var ragChunkContext: [KnowledgeChunk] = []
+            let keywordNoteFallback: () -> [Note] = {
                 self.vectorSearchService.findKeywordMatches(
                     queryText: userMessageText,
                     notes: notes,
                     topK: 3
                 )
             }
+            let keywordChunkFallback: () -> [KnowledgeChunk] = {
+                self.vectorSearchService.findKeywordMatchesInChunks(
+                    queryText: userMessageText,
+                    chunks: knowledgeChunks,
+                    topK: 3
+                )
+            }
 
-            if !notes.isEmpty {
-                let ragReady = await ensureRAGReadyBeforeSend(notes: notes, modelContext: modelContext)
+            if !notes.isEmpty || !knowledgeChunks.isEmpty {
+                let ragReady = await ensureRAGReadyBeforeSend(
+                    notes: notes,
+                    knowledgeChunks: knowledgeChunks,
+                    modelContext: modelContext
+                )
                 if ragReady, isEmbeddingModelLoaded {
                     let eligibleNotes = notes.filter { isNoteEmbeddingFresh($0) }
+                    let eligibleChunks = knowledgeChunks.filter { isKnowledgeChunkEmbeddingFresh($0) }
                     self.lastRAGEligibleNotesCount = eligibleNotes.count
-                    if eligibleNotes.isEmpty {
-                        let fallbackContext = keywordFallback()
-                        if fallbackContext.isEmpty {
+                    self.lastRAGEligibleChunksCount = eligibleChunks.count
+                    if eligibleNotes.isEmpty && eligibleChunks.isEmpty {
+                        let fallbackNotes = keywordNoteFallback()
+                        let fallbackChunks = keywordChunkFallback()
+                        ragNoteContext = Array(fallbackNotes.prefix(2))
+                        ragChunkContext = Array(fallbackChunks.prefix(max(0, 3 - ragNoteContext.count)))
+                        if ragNoteContext.isEmpty && ragChunkContext.isEmpty {
                             self.ragStatus = .noIndexedNotes
                         } else {
-                            ragContext = fallbackContext
-                            self.applyRetrievedContextMetadata(fallbackContext)
-                            self.ragStatus = .usedContext(count: fallbackContext.count)
+                            self.applyRetrievedContextMetadata(notes: ragNoteContext, chunks: ragChunkContext)
+                            self.ragStatus = .usedContext(count: ragNoteContext.count + ragChunkContext.count)
                         }
                     } else {
-                        var foundContext: [Note] = []
+                        var foundNotes: [Note] = []
+                        var foundChunks: [KnowledgeChunk] = []
                         var vectorError: String? = nil
 
                         do {
@@ -333,55 +397,77 @@ class GlobalViewModel {
                                 throw LlamaError.noEmbeddings
                             }
 
+                            typealias Scored = (score: Float, note: Note?, chunk: KnowledgeChunk?)
+                            var scored: [Scored] = []
+
                             let compatibleNotes = eligibleNotes.filter {
                                 ($0.embedding?.count ?? 0) == queryEmbedding.count
                             }
+                            for note in compatibleNotes {
+                                guard let embedding = note.embedding,
+                                      let score = vectorSearchService.scoreEmbedding(queryEmbedding: queryEmbedding, candidateEmbedding: embedding) else { continue }
+                                scored.append((score: score, note: note, chunk: nil))
+                            }
 
-                            if !compatibleNotes.isEmpty {
-                                foundContext = vectorSearchService.findSimilarNotes(
-                                    queryEmbedding: queryEmbedding,
-                                    notes: compatibleNotes,
-                                    topK: 3
-                                )
+                            let compatibleChunks = eligibleChunks.filter {
+                                ($0.embedding?.count ?? 0) == queryEmbedding.count
+                            }
+                            for chunk in compatibleChunks {
+                                guard let embedding = chunk.embedding,
+                                      let score = vectorSearchService.scoreEmbedding(queryEmbedding: queryEmbedding, candidateEmbedding: embedding) else { continue }
+                                scored.append((score: score, note: nil, chunk: chunk))
+                            }
+
+                            let top = scored.sorted { $0.score > $1.score }.prefix(3)
+                            for item in top {
+                                if let note = item.note {
+                                    foundNotes.append(note)
+                                } else if let chunk = item.chunk {
+                                    foundChunks.append(chunk)
+                                }
                             }
                         } catch {
                             vectorError = error.localizedDescription
                         }
 
-                        // Fallback retrieval: if vector path returns nothing (or fails),
-                        // use keyword overlap so RAG still provides useful context.
-                        if foundContext.isEmpty {
-                            foundContext = keywordFallback()
+                        if foundNotes.isEmpty && foundChunks.isEmpty {
+                            let fallbackNotes = keywordNoteFallback()
+                            let fallbackChunks = keywordChunkFallback()
+                            foundNotes = Array(fallbackNotes.prefix(2))
+                            foundChunks = Array(fallbackChunks.prefix(max(0, 3 - foundNotes.count)))
                         }
 
-                        ragContext = foundContext
-                        self.applyRetrievedContextMetadata(foundContext)
-                        if foundContext.isEmpty, let vectorError {
+                        ragNoteContext = foundNotes
+                        ragChunkContext = foundChunks
+                        self.applyRetrievedContextMetadata(notes: foundNotes, chunks: foundChunks)
+                        if foundNotes.isEmpty && foundChunks.isEmpty, let vectorError {
                             self.ragStatus = .failed(vectorError)
                         } else {
-                            self.ragStatus = .usedContext(count: foundContext.count)
+                            self.ragStatus = .usedContext(count: foundNotes.count + foundChunks.count)
                         }
                     }
                 } else {
-                    // If embedding model/index readiness fails, still try keyword retrieval
-                    // so Chat can use note context instead of fully disabling RAG.
-                    let fallbackContext = keywordFallback()
-                    ragContext = fallbackContext
-                    self.applyRetrievedContextMetadata(fallbackContext)
-                    if !fallbackContext.isEmpty {
-                        self.ragStatus = .usedContext(count: fallbackContext.count)
+                    let fallbackNotes = keywordNoteFallback()
+                    let fallbackChunks = keywordChunkFallback()
+                    ragNoteContext = Array(fallbackNotes.prefix(2))
+                    ragChunkContext = Array(fallbackChunks.prefix(max(0, 3 - ragNoteContext.count)))
+                    self.applyRetrievedContextMetadata(notes: ragNoteContext, chunks: ragChunkContext)
+                    if !ragNoteContext.isEmpty || !ragChunkContext.isEmpty {
+                        self.ragStatus = .usedContext(count: ragNoteContext.count + ragChunkContext.count)
                     }
                 }
             }
 
-            let messages = buildMessageHistory(ragContext: ragContext)
+            let messages = buildMessageHistory(ragNotes: ragNoteContext, ragChunks: ragChunkContext)
             let prompt = await llamaContext.applyTemplate(messages: messages)
 
-            let sourceNoteIds = ragContext.map { $0.id }
+            let sourceNoteIds = ragNoteContext.map { $0.id }
+            let sourceChunkIds = ragChunkContext.map { $0.id }
             let assistantMessage = ChatMessage(
                 role: "assistant",
                 content: "",
                 sourceNoteIds: sourceNoteIds,
+                sourceKnowledgeChunkIds: sourceChunkIds,
                 session: session
             )
             modelContext.insert(assistantMessage)
@@ -427,29 +513,31 @@ class GlobalViewModel {
         case .preparingModel:
             return "RAG: preparing embedding model..."
         case .preparingIndex:
-            return "RAG: preparing note index..."
+            return "RAG: preparing knowledge index..."
         case .timedOut:
-            return "RAG preparation timed out. Answering without note context."
+            return "RAG preparation timed out. Answering without retrieval context."
         case .disabledNoEmbeddingModel:
             return "RAG is disabled: load an embedding model."
         case .noIndexedNotes:
-            return "No indexed notes for the active embedding model."
+            return "No indexed knowledge for the active embedding model."
         case .usedContext(let count):
-            return count > 0 ? "RAG: using \(count) note(s) as context." : "RAG: no relevant notes found."
+            return count > 0 ? "RAG: using \(count) source(s) as context." : "RAG: no relevant context found."
         case .failed(let message):
             return "RAG failed: \(message)"
         }
     }
 
     func ragDebugText() -> String? {
-        if lastRAGPreparedNotesCount == 0 && lastRAGEligibleNotesCount == 0 && lastRAGRetrievedCount == 0 {
+        if lastRAGPreparedNotesCount == 0 && lastRAGPreparedChunksCount == 0 && lastRAGEligibleNotesCount == 0 && lastRAGEligibleChunksCount == 0 && lastRAGRetrievedCount == 0 {
             return nil
         }
-        if lastRAGRetrievedTitles.isEmpty {
-            return "RAG notes: prepared \(lastRAGPreparedNotesCount), eligible \(lastRAGEligibleNotesCount), retrieved \(lastRAGRetrievedCount)"
+        if lastRAGRetrievedTitles.isEmpty && lastRAGRetrievedDocumentTitles.isEmpty {
+            return "RAG: notes prepared \(lastRAGPreparedNotesCount), chunks prepared \(lastRAGPreparedChunksCount), notes eligible \(lastRAGEligibleNotesCount), chunks eligible \(lastRAGEligibleChunksCount), retrieved \(lastRAGRetrievedCount)"
         }
-        let joinedTitles = lastRAGRetrievedTitles.prefix(3).joined(separator: ", ")
-        return "RAG notes: prepared \(lastRAGPreparedNotesCount), eligible \(lastRAGEligibleNotesCount), retrieved \(lastRAGRetrievedCount) [\(joinedTitles)]"
+        let joinedNotes = lastRAGRetrievedTitles.prefix(2).joined(separator: ", ")
+        let joinedDocs = lastRAGRetrievedDocumentTitles.prefix(2).joined(separator: ", ")
+        let preview = [joinedNotes, joinedDocs].filter { !$0.isEmpty }.joined(separator: " | ")
+        return "RAG: notes prepared \(lastRAGPreparedNotesCount), chunks prepared \(lastRAGPreparedChunksCount), notes eligible \(lastRAGEligibleNotesCount), chunks eligible \(lastRAGEligibleChunksCount), retrieved \(lastRAGRetrievedCount) [\(preview)]"
     }
 
     // MARK: - Indexing (RAG)
@@ -508,7 +596,24 @@ class GlobalViewModel {
         }
     }
 
-    private func ensureRAGReadyBeforeSend(notes: [Note], modelContext: ModelContext) async -> Bool {
+    func startAutoIndexKnowledgeIfNeeded(chunks: [KnowledgeChunk], modelContext: ModelContext) {
+        guard isEmbeddingModelLoaded, !isIndexing else { return }
+        guard !knowledgeChunksNeedingEmbedding(chunks).isEmpty else { return }
+
+        Task { @MainActor in
+            do {
+                _ = try await ensureKnowledgeChunksIndexedForRAG(chunks: chunks, modelContext: modelContext)
+            } catch {
+                // Best-effort background indexing for knowledge chunks.
+            }
+        }
+    }
+
+    private func ensureRAGReadyBeforeSend(
+        notes: [Note],
+        knowledgeChunks: [KnowledgeChunk],
+        modelContext: ModelContext
+    ) async -> Bool {
         let deadline = Date().addingTimeInterval(10)
         func timedOut() -> Bool { Date() > deadline }
 
@@ -536,8 +641,9 @@ class GlobalViewModel {
                 ragStatus = .preparingIndex
                 let finished = await waitForIndexingToFinish(before: deadline)
                 if !finished {
-                    let fallbackEligible = notes.filter { isNoteEmbeddingFresh($0) }
-                    if fallbackEligible.isEmpty {
+                    let fallbackEligibleNotes = notes.filter { isNoteEmbeddingFresh($0) }
+                    let fallbackEligibleChunks = knowledgeChunks.filter { isKnowledgeChunkEmbeddingFresh($0) }
+                    if fallbackEligibleNotes.isEmpty && fallbackEligibleChunks.isEmpty {
                         ragStatus = .timedOut
                         return false
                     }
@@ -545,14 +651,16 @@ class GlobalViewModel {
                 }
             }
 
-            if !notesNeedingEmbedding(notes).isEmpty {
+            if !notesNeedingEmbedding(notes).isEmpty || !knowledgeChunksNeedingEmbedding(knowledgeChunks).isEmpty {
                 ragStatus = .preparingIndex
                 _ = try await ensureIndexedForRAG(notes: notes, modelContext: modelContext, deadline: deadline)
+                _ = try await ensureKnowledgeChunksIndexedForRAG(chunks: knowledgeChunks, modelContext: modelContext, deadline: deadline)
             }
 
             if timedOut() {
-                let fallbackEligible = notes.filter { isNoteEmbeddingFresh($0) }
-                if fallbackEligible.isEmpty {
+                let fallbackEligibleNotes = notes.filter { isNoteEmbeddingFresh($0) }
+                let fallbackEligibleChunks = knowledgeChunks.filter { isKnowledgeChunkEmbeddingFresh($0) }
+                if fallbackEligibleNotes.isEmpty && fallbackEligibleChunks.isEmpty {
                     ragStatus = .timedOut
                     return false
                 }
@@ -567,6 +675,10 @@ class GlobalViewModel {
 
     func indexedCountForActiveEmbedding(notes: [Note]) -> Int {
         notes.filter { isNoteEmbeddingFresh($0) }.count
+    }
+
+    func indexedKnowledgeChunkCountForActiveEmbedding(chunks: [KnowledgeChunk]) -> Int {
+        chunks.filter { isKnowledgeChunkEmbeddingFresh($0) }.count
     }
 
     // MARK: - Helpers
@@ -663,13 +775,13 @@ class GlobalViewModel {
         sessions = try modelContext.fetch(descriptor)
     }
 
-    private func buildMessageHistory(ragContext: [Note] = []) -> [[String: String]] {
+    private func buildMessageHistory(ragNotes: [Note] = [], ragChunks: [KnowledgeChunk] = []) -> [[String: String]] {
         var messages: [[String: String]] = []
         var systemContent = "You are a helpful assistant."
-        let contextBlock = ragContextBlock(ragContext)
+        let contextBlock = ragContextBlock(notes: ragNotes, chunks: ragChunks)
 
         if !contextBlock.isEmpty {
-            systemContent += "\n\nUse retrieved notes when relevant, and prefer note-grounded answers."
+            systemContent += "\n\nUse retrieved knowledge when relevant, and prefer grounded answers."
         }
 
         messages.append([
@@ -683,11 +795,11 @@ class GlobalViewModel {
             var content = msg.content
 
             // Inject retrieved context into the most recent user turn so templates
-            // that ignore system role still receive note context.
+            // that ignore system role still receive retrieval context.
             if !contextBlock.isEmpty,
                msg.role == "user",
                index == lastIndex {
-                content += "\n\nRetrieved note context:\n\(contextBlock)"
+                content += "\n\nRetrieved context:\n\(contextBlock)"
             }
 
             messages.append([
@@ -699,21 +811,35 @@ class GlobalViewModel {
         return messages
     }
 
-    private func ragContextBlock(_ ragContext: [Note]) -> String {
-        guard !ragContext.isEmpty else { return "" }
+    private func ragContextBlock(notes: [Note], chunks: [KnowledgeChunk]) -> String {
+        var lines: [String] = []
 
-        return ragContext.map { note in
+        for note in notes {
             let title = note.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Untitled" : note.title
             let snippet = String(note.content.prefix(500)).trimmingCharacters(in: .whitespacesAndNewlines)
-            return "- [\(title)] \(snippet)"
-        }.joined(separator: "\n")
+            lines.append("- [Note: \(title)] \(snippet)")
+        }
+
+        for chunk in chunks {
+            let rawTitle = chunk.document?.title.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let docTitle = rawTitle.isEmpty ? "Document" : rawTitle
+            let snippet = String(chunk.text.prefix(500)).trimmingCharacters(in: .whitespacesAndNewlines)
+            lines.append("- [KB: \(docTitle) / chunk \(chunk.chunkIndex + 1)] \(snippet)")
+        }
+
+        return lines.joined(separator: "\n")
     }
 
-    private func applyRetrievedContextMetadata(_ notes: [Note]) {
+    private func applyRetrievedContextMetadata(notes: [Note], chunks: [KnowledgeChunk]) {
         retrievedContext = notes
-        lastRAGRetrievedCount = notes.count
+        retrievedKnowledgeContext = chunks
+        lastRAGRetrievedCount = notes.count + chunks.count
         lastRAGRetrievedTitles = notes.map {
             $0.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Untitled" : $0.title
+        }
+        lastRAGRetrievedDocumentTitles = chunks.map {
+            let title = $0.document?.title.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            return title.isEmpty ? "Document" : title
         }
     }
 
@@ -846,6 +972,35 @@ class GlobalViewModel {
         isEmbeddingModelLoading = false
     }
 
+    private func loadOCRModelAsync(item: ModelCatalogItem, persistSelection: Bool) async {
+        guard item.kind == .ocr || item.kind == .vl else { return }
+        guard let path = modelPathIfInstalled(item) else {
+            modelError = "Model file not found"
+            return
+        }
+        guard !isOCRModelLoading else { return }
+
+        isOCRModelLoading = true
+        modelError = nil
+
+        do {
+            let auxiliaryURL = ((try? ModelStorage.shared.auxiliaryFileURL(for: item)) ?? nil)
+            let auxiliaryPath = auxiliaryURL?.path
+            try await llamaContext.loadOCRModel(path: path, auxiliaryPath: auxiliaryPath, lowMemory: isLowPowerMode)
+            isOCRModelLoaded = true
+            currentOCRModelId = item.id
+            touchOCRUsage()
+            if persistSelection {
+                defaults.set(item.id, forKey: PreferenceKey.activeOCRModelId)
+            }
+        } catch {
+            modelError = error.localizedDescription
+            isOCRModelLoaded = false
+        }
+
+        isOCRModelLoading = false
+    }
+
     private func unloadChatModelAsync(clearSelection: Bool) async {
         await llamaContext.unloadChat()
         isChatModelLoaded = false
@@ -866,6 +1021,77 @@ class GlobalViewModel {
         }
     }
 
+    private func unloadOCRModelAsync(clearSelection: Bool) async {
+        ocrAutoUnloadTask?.cancel()
+        ocrAutoUnloadTask = nil
+        ocrLastUsedAt = nil
+        await llamaContext.unloadOCRModel()
+        isOCRModelLoaded = false
+        isOCRModelLoading = false
+        if clearSelection {
+            currentOCRModelId = nil
+            defaults.removeObject(forKey: PreferenceKey.activeOCRModelId)
+        }
+    }
+
+    private func prepareOCRModelForTask() async -> (enabled: Bool, loadedTemporarily: Bool) {
+        guard let id = currentOCRModelId,
+              let item = findItem(id: id),
+              modelPathIfInstalled(item) != nil else {
+            return (false, false)
+        }
+
+        if isOCRModelLoaded {
+            touchOCRUsage()
+            return (true, false)
+        }
+
+        await loadOCRModelAsync(item: item, persistSelection: false)
+        if isOCRModelLoaded {
+            touchOCRUsage()
+            return (true, true)
+        }
+
+        return (false, false)
+    }
+
+    private func finishOCRModelTask(loadedTemporarily: Bool) async {
+        if loadedTemporarily {
+            await unloadOCRModelAsync(clearSelection: false)
+        } else {
+            scheduleOCRAutoUnload()
+        }
+    }
+
+    private func touchOCRUsage() {
+        ocrLastUsedAt = Date()
+        scheduleOCRAutoUnload()
+    }
+
+    private func scheduleOCRAutoUnload(after seconds: TimeInterval = 45) {
+        ocrAutoUnloadTask?.cancel()
+        guard isOCRModelLoaded else { return }
+        ocrAutoUnloadTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            try? await Task.sleep(for: .seconds(seconds))
+            guard !Task.isCancelled else { return }
+            guard self.isOCRModelLoaded else { return }
+            guard !self.isImportingKnowledge else {
+                self.scheduleOCRAutoUnload(after: seconds)
+                return
+            }
+            guard let last = self.ocrLastUsedAt else {
+                await self.unloadOCRModelAsync(clearSelection: false)
+                return
+            }
+            if Date().timeIntervalSince(last) >= seconds {
+                await self.unloadOCRModelAsync(clearSelection: false)
+            } else {
+                self.scheduleOCRAutoUnload(after: seconds)
+            }
+        }
+    }
+
     private func noteContentHash(_ note: Note) -> String {
         noteContentHash(title: note.title, content: note.content)
     }
@@ -873,6 +1099,11 @@ class GlobalViewModel {
     private func noteContentHash(title: String, content: String) -> String {
         let text = "\(title)\n\(content)"
         let digest = SHA256.hash(data: Data(text.utf8))
+        return digest.map { String(format: "%02x", $0) }.joined()
+    }
+
+    private func knowledgeChunkContentHash(_ chunk: KnowledgeChunk) -> String {
+        let digest = SHA256.hash(data: Data(chunk.text.utf8))
         return digest.map { String(format: "%02x", $0) }.joined()
     }
 
@@ -936,6 +1167,12 @@ class GlobalViewModel {
         }
     }
 
+    private func knowledgeChunksNeedingEmbedding(_ chunks: [KnowledgeChunk]) -> [KnowledgeChunk] {
+        chunks.filter { chunk in
+            !isKnowledgeChunkEmbeddingFresh(chunk)
+        }
+    }
+
     private func waitForIndexingToFinish(before deadline: Date) async -> Bool {
         while isIndexing {
             if Date() > deadline {
@@ -963,11 +1200,317 @@ class GlobalViewModel {
         try? modelContext.save()
     }
 
+    private func ensureKnowledgeChunksIndexedForRAG(chunks: [KnowledgeChunk], modelContext: ModelContext, deadline: Date? = nil) async throws -> Int {
+        guard isEmbeddingModelLoaded, !isIndexing else { return 0 }
+        let candidates = knowledgeChunksNeedingEmbedding(chunks)
+        guard !candidates.isEmpty else { return 0 }
+
+        isIndexing = true
+        indexingProgress = 0.0
+        indexingStatus = "Auto-indexing knowledge chunks..."
+        defer { isIndexing = false }
+
+        var indexed = 0
+        var failed = 0
+        let total = candidates.count
+
+        for chunk in candidates {
+            if let deadline, Date() > deadline { break }
+            do {
+                try await indexSingleKnowledgeChunk(chunk: chunk, modelContext: modelContext)
+                indexed += 1
+            } catch {
+                failed += 1
+            }
+            indexingProgress = Double(indexed + failed) / Double(total)
+        }
+
+        indexingStatus = nil
+        indexingProgress = 0.0
+        try? modelContext.save()
+        return indexed
+    }
+
+    private func indexSingleKnowledgeChunk(chunk: KnowledgeChunk, modelContext: ModelContext) async throws {
+        guard let embeddingModelId = currentEmbeddingModelId else {
+            throw LlamaError.notLoaded
+        }
+
+        let contentHash = knowledgeChunkContentHash(chunk)
+        let embedding = try await llamaContext.embedWithEmbeddingModel(text: chunk.text)
+
+        chunk.embedding = embedding
+        chunk.embeddingModelId = embeddingModelId
+        chunk.embeddingUpdatedAt = Date()
+        chunk.embeddingContentHash = contentHash
+        chunk.updatedAt = Date()
+
+        try? modelContext.save()
+    }
+
     private func isNoteEmbeddingFresh(_ note: Note) -> Bool {
         guard let embedding = note.embedding, !embedding.isEmpty else { return false }
         guard let modelId = note.embeddingModelId else { return false }
         guard modelId == currentEmbeddingModelId else { return false }
         guard let savedHash = note.embeddingContentHash else { return false }
         return savedHash == noteContentHash(note)
+    }
+
+    private func isKnowledgeChunkEmbeddingFresh(_ chunk: KnowledgeChunk) -> Bool {
+        guard let embedding = chunk.embedding, !embedding.isEmpty else { return false }
+        guard let modelId = chunk.embeddingModelId else { return false }
+        guard modelId == currentEmbeddingModelId else { return false }
+        guard let savedHash = chunk.embeddingContentHash else { return false }
+        return savedHash == knowledgeChunkContentHash(chunk)
+    }
+}
+
+extension GlobalViewModel {
+    func importKnowledgeFiles(
+        urls: [URL],
+        sourceType: KnowledgeSourceType = .localFile,
+        driveFileId: String? = nil,
+        modelContext: ModelContext
+    ) {
+        guard !urls.isEmpty else { return }
+        guard !isImportingKnowledge else { return }
+
+        isImportingKnowledge = true
+        knowledgeImportStatus = "Importing \(urls.count) file(s)..."
+
+        Task { @MainActor in
+            var success = 0
+            var failed = 0
+            let ocrSession = await prepareOCRModelForTask()
+
+            for url in urls {
+                let didAccess = url.startAccessingSecurityScopedResource()
+                do {
+                    try await importSingleKnowledgeFile(
+                        from: url,
+                        sourceType: sourceType,
+                        driveFileId: driveFileId,
+                        preferOCRModel: ocrSession.enabled,
+                        modelContext: modelContext
+                    )
+                    success += 1
+                } catch {
+                    failed += 1
+                }
+                if didAccess {
+                    url.stopAccessingSecurityScopedResource()
+                }
+            }
+
+            await finishOCRModelTask(loadedTemporarily: ocrSession.loadedTemporarily)
+            isImportingKnowledge = false
+            knowledgeImportStatus = "Knowledge import: \(success) succeeded, \(failed) failed"
+            Task { @MainActor in
+                try? await Task.sleep(for: .seconds(3))
+                if !isImportingKnowledge {
+                    knowledgeImportStatus = nil
+                }
+            }
+        }
+    }
+
+    func importKnowledgeImageData(_ data: Data, suggestedName: String, modelContext: ModelContext) {
+        guard !data.isEmpty else { return }
+        guard !isImportingKnowledge else { return }
+
+        isImportingKnowledge = true
+        knowledgeImportStatus = "Importing image..."
+
+        Task { @MainActor in
+            defer { isImportingKnowledge = false }
+            let ocrSession = await prepareOCRModelForTask()
+            do {
+                let ingested = try await knowledgeIngestionService.ingestImageData(
+                    data,
+                    suggestedName: suggestedName,
+                    llamaContext: llamaContext,
+                    preferOCRModel: ocrSession.enabled
+                )
+                try await persistIngestedDocument(ingested, modelContext: modelContext)
+                knowledgeImportStatus = "Image imported to knowledge base"
+            } catch {
+                knowledgeImportStatus = "Image import failed: \(error.localizedDescription)"
+            }
+            await finishOCRModelTask(loadedTemporarily: ocrSession.loadedTemporarily)
+            Task { @MainActor in
+                try? await Task.sleep(for: .seconds(3))
+                if !isImportingKnowledge {
+                    knowledgeImportStatus = nil
+                }
+            }
+        }
+    }
+
+    func importKnowledgeDriveFile(_ file: DriveFile, modelContext: ModelContext) {
+        guard !isImportingKnowledge else { return }
+        guard !file.id.isEmpty else { return }
+
+        isImportingKnowledge = true
+        knowledgeImportStatus = "Downloading from Drive..."
+
+        Task { @MainActor in
+            defer { isImportingKnowledge = false }
+            let ocrSession = await prepareOCRModelForTask()
+            let ext = URL(fileURLWithPath: file.name ?? "drive-file").pathExtension.lowercased()
+            let suffix = resolvedDriveTempExtension(fileNameExtension: ext, mimeType: file.mimeType)
+            let tempURL = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID().uuidString).\(suffix)", isDirectory: false)
+            do {
+                try await driveSync.downloadFileFromSynapsFolder(fileId: file.id, to: tempURL)
+                try await importSingleKnowledgeFile(
+                    from: tempURL,
+                    sourceType: .drive,
+                    driveFileId: file.id,
+                    preferredTitle: file.name,
+                    preferOCRModel: ocrSession.enabled,
+                    modelContext: modelContext
+                )
+                knowledgeImportStatus = "Drive file imported"
+            } catch {
+                knowledgeImportStatus = "Drive import failed: \(error.localizedDescription)"
+            }
+            await finishOCRModelTask(loadedTemporarily: ocrSession.loadedTemporarily)
+            try? FileManager.default.removeItem(at: tempURL)
+            Task { @MainActor in
+                try? await Task.sleep(for: .seconds(3))
+                if !isImportingKnowledge {
+                    knowledgeImportStatus = nil
+                }
+            }
+        }
+    }
+
+    func deleteKnowledgeDocument(_ document: KnowledgeDocument, modelContext: ModelContext) {
+        knowledgeIngestionService.deleteStoredFile(relativePath: document.localRelativePath)
+        modelContext.delete(document)
+        try? modelContext.save()
+    }
+
+    func reindexKnowledgeBase(chunks: [KnowledgeChunk], modelContext: ModelContext) {
+        guard isEmbeddingModelLoaded, !isIndexing else { return }
+        guard !chunks.isEmpty else { return }
+
+        isIndexing = true
+        indexingProgress = 0
+        indexingStatus = "Reindexing knowledge base..."
+
+        Task { @MainActor in
+            defer {
+                isIndexing = false
+                indexingProgress = 0
+                Task { @MainActor in
+                    try? await Task.sleep(for: .seconds(3))
+                    if !isIndexing {
+                        indexingStatus = nil
+                    }
+                }
+            }
+
+            var indexed = 0
+            var failed = 0
+            for chunk in chunks {
+                do {
+                    try await indexSingleKnowledgeChunk(chunk: chunk, modelContext: modelContext)
+                    indexed += 1
+                } catch {
+                    failed += 1
+                }
+                indexingProgress = Double(indexed + failed) / Double(chunks.count)
+            }
+            indexingStatus = "Reindexed knowledge chunks: \(indexed) done, \(failed) failed"
+            try? modelContext.save()
+        }
+    }
+
+    func resolveKnowledgeDocumentURL(_ document: KnowledgeDocument) -> URL? {
+        try? knowledgeIngestionService.resolveDocumentURL(relativePath: document.localRelativePath)
+    }
+
+    private func importSingleKnowledgeFile(
+        from url: URL,
+        sourceType: KnowledgeSourceType,
+        driveFileId: String? = nil,
+        preferredTitle: String? = nil,
+        preferOCRModel: Bool,
+        modelContext: ModelContext
+    ) async throws {
+        var ingested = try await knowledgeIngestionService.ingestLocalFile(
+            sourceURL: url,
+            sourceType: sourceType,
+            driveFileId: driveFileId,
+            llamaContext: llamaContext,
+            preferOCRModel: preferOCRModel
+        )
+        if let preferredTitle, !preferredTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            ingested.title = preferredTitle
+        }
+        try await persistIngestedDocument(ingested, modelContext: modelContext)
+    }
+
+    private func persistIngestedDocument(_ ingested: IngestedKnowledgeDocument, modelContext: ModelContext) async throws {
+        let document = KnowledgeDocument(
+            title: ingested.title,
+            sourceType: ingested.sourceType.rawValue,
+            mimeType: ingested.mimeType,
+            localRelativePath: ingested.relativePath,
+            driveFileId: ingested.driveFileId,
+            extractionStatus: ingested.chunks.isEmpty ? "empty" : "ready",
+            extractionError: ingested.chunks.isEmpty ? "No text extracted" : nil,
+            extractionEngine: ingested.extractionResult.engine,
+            contentHash: ingested.contentHash,
+            createdAt: Date(),
+            updatedAt: Date()
+        )
+        modelContext.insert(document)
+
+        for (index, text) in ingested.chunks.enumerated() {
+            let chunk = KnowledgeChunk(
+                chunkIndex: index,
+                text: text,
+                createdAt: Date(),
+                updatedAt: Date(),
+                document: document
+            )
+            modelContext.insert(chunk)
+            if isEmbeddingModelLoaded {
+                try? await indexSingleKnowledgeChunk(chunk: chunk, modelContext: modelContext)
+            }
+        }
+
+        try? modelContext.save()
+    }
+
+    private func resolvedDriveTempExtension(fileNameExtension ext: String, mimeType: String?) -> String {
+        if !ext.isEmpty {
+            return ext
+        }
+
+        if let mimeType, let type = UTType(mimeType: mimeType), let preferred = type.preferredFilenameExtension, !preferred.isEmpty {
+            return preferred
+        }
+
+        let normalizedMime = (mimeType ?? "").lowercased()
+        switch normalizedMime {
+        case "application/pdf":
+            return "pdf"
+        case "text/plain":
+            return "txt"
+        case "text/markdown":
+            return "md"
+        case "image/jpeg":
+            return "jpg"
+        case "image/png":
+            return "png"
+        case "image/webp":
+            return "webp"
+        case "image/heic":
+            return "heic"
+        default:
+            return "bin"
+        }
     }
 }

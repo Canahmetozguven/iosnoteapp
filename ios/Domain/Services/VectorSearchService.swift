@@ -19,6 +19,16 @@ import Foundation
 class VectorSearchService {
     
     init() {}
+
+    func scoreEmbedding(queryEmbedding: [Float], candidateEmbedding: [Float]) -> Float? {
+        guard !queryEmbedding.isEmpty,
+              queryEmbedding.count == candidateEmbedding.count else {
+            return nil
+        }
+        let qNorm = l2Norm(queryEmbedding)
+        guard qNorm > 0 else { return nil }
+        return cosineSimilarity(v1: queryEmbedding, v1Norm: qNorm, v2: candidateEmbedding)
+    }
     
     /// Finds the most similar notes to a query embedding.
     ///
@@ -110,6 +120,39 @@ class VectorSearchService {
             }
             .prefix(topK)
             .map { $0.note }
+    }
+
+    func findKeywordMatchesInChunks(
+        queryText: String,
+        chunks: [KnowledgeChunk],
+        topK: Int
+    ) -> [KnowledgeChunk] {
+        guard !queryText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              !chunks.isEmpty,
+              topK > 0 else {
+            return []
+        }
+
+        let queryTokens = tokenize(queryText)
+        guard !queryTokens.isEmpty else { return [] }
+
+        let scored: [(chunk: KnowledgeChunk, score: Int)] = chunks.compactMap { chunk in
+            let textTokens = tokenize(chunk.text)
+            guard !textTokens.isEmpty else { return nil }
+            let overlap = queryTokens.intersection(textTokens).count
+            guard overlap > 0 else { return nil }
+            return (chunk: chunk, score: overlap)
+        }
+
+        return scored
+            .sorted { lhs, rhs in
+                if lhs.score == rhs.score {
+                    return lhs.chunk.updatedAt > rhs.chunk.updatedAt
+                }
+                return lhs.score > rhs.score
+            }
+            .prefix(topK)
+            .map { $0.chunk }
     }
     
     // MARK: - Vector Math

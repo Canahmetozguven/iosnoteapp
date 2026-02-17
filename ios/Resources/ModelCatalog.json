@@ -80,6 +80,48 @@
       "url": "https://huggingface.co/ggml-org/bge-small-en-v1.5-Q8_0-GGUF/resolve/main/bge-small-en-v1.5-q8_0.gguf?download=true",
       "sizeBytes": null,
       "sha256": null
+    },
+    {
+      "id": "glm-ocr-q8-0",
+      "kind": "ocr",
+      "name": "GLM-OCR Q8_0",
+      "subtitle": "Ollama library, Text+Image OCR",
+      "filename": "glm-ocr-q8_0.gguf",
+      "auxiliaryFilename": null,
+      "auxiliaryURL": null,
+      "auxiliarySha256": null,
+      "modality": "vision_ocr",
+      "url": "https://ollama.com/library/glm-ocr%3Aq8_0/blobs/24ca1840804a?download=true",
+      "sizeBytes": null,
+      "sha256": null
+    },
+    {
+      "id": "lightonocr-2-1b-q8-0",
+      "kind": "ocr",
+      "name": "LightOnOCR 2 1B",
+      "subtitle": "LightOn OCR 2 1B, Q8_0 + mmproj",
+      "filename": "LightOnOCR-2-1B-Q8_0.gguf",
+      "auxiliaryFilename": "LightOnOCR-2-1B-mmproj-f16.gguf",
+      "auxiliaryURL": "https://huggingface.co/wangjazz/LightOnOCR-2-1B-gguf/resolve/main/LightOnOCR-2-1B-mmproj-f16.gguf?download=true",
+      "auxiliarySha256": null,
+      "modality": "vision_ocr",
+      "url": "https://huggingface.co/wangjazz/LightOnOCR-2-1B-gguf/resolve/main/LightOnOCR-2-1B-Q8_0.gguf?download=true",
+      "sizeBytes": null,
+      "sha256": null
+    },
+    {
+      "id": "qwen3-vl-2b-instruct-q4-k-m",
+      "kind": "vl",
+      "name": "Qwen3-VL 2B Instruct",
+      "subtitle": "Vision-language, Q4_K_M + mmproj",
+      "filename": "Qwen3-VL-2B-Instruct-Q4_K_M.gguf",
+      "auxiliaryFilename": "mmproj-BF16.gguf",
+      "auxiliaryURL": "https://huggingface.co/unsloth/Qwen3-VL-2B-Instruct-GGUF/resolve/main/mmproj-BF16.gguf?download=true",
+      "auxiliarySha256": null,
+      "modality": "vision",
+      "url": "https://huggingface.co/unsloth/Qwen3-VL-2B-Instruct-GGUF/resolve/main/Qwen3-VL-2B-Instruct-Q4_K_M.gguf?download=true",
+      "sizeBytes": null,
+      "sha256": null
     }
   ]
 }

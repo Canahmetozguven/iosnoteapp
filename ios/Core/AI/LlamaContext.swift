@@ -9,6 +9,8 @@ enum LlamaError: Error {
     case noEmbeddings
     case notLoaded
     case batchOverflow
+    case ocrBridgeUnavailable
+    case ocrVisionUnavailable
 }
 
 actor LlamaContext {
@@ -16,6 +18,10 @@ actor LlamaContext {
     private var context: OpaquePointer?
     private var modelEmbed: OpaquePointer?
     private var contextEmbed: OpaquePointer?
+    private var modelOCR: OpaquePointer?
+    private var contextOCR: OpaquePointer?
+    private var visionOCRContext: OpaquePointer?
+    private var visionOCRMarker: String = "<__media__>"
     
     // Batch for chat processing
     private var batch: llama_batch
@@ -25,6 +31,7 @@ actor LlamaContext {
     private var stopRequested = false
     private var chatGpuEnabled = false
     private var embeddingGpuEnabled = false
+    private var ocrGpuEnabled = false
     
     init() {
         self.batchCapacity = 512
@@ -40,6 +47,9 @@ actor LlamaContext {
         if let model = model { llama_model_free(model) }
         if let contextEmbed = contextEmbed { llama_free(contextEmbed) }
         if let modelEmbed = modelEmbed { llama_model_free(modelEmbed) }
+        if let visionOCRContext = visionOCRContext { mtmd_free(visionOCRContext) }
+        if let contextOCR = contextOCR { llama_free(contextOCR) }
+        if let modelOCR = modelOCR { llama_model_free(modelOCR) }
     }
 
     private func resetBatch(capacity: Int32) {
@@ -134,6 +144,7 @@ actor LlamaContext {
     func unload() {
         unloadChat()
         unloadEmbedding()
+        unloadOCRModel()
     }
 
     func unloadChat() {
@@ -161,8 +172,151 @@ actor LlamaContext {
         embeddingGpuEnabled = false
     }
 
+    func loadOCRModel(path: String, auxiliaryPath: String? = nil, lowMemory: Bool = false) throws {
+        if let visionOCRContext = visionOCRContext { mtmd_free(visionOCRContext); self.visionOCRContext = nil }
+        if let contextOCR = contextOCR { llama_free(contextOCR); self.contextOCR = nil }
+        if let modelOCR = modelOCR { llama_model_free(modelOCR); self.modelOCR = nil }
+
+        var modelParams = llama_model_default_params()
+        modelParams.n_gpu_layers = lowMemory ? 0 : 99
+        self.ocrGpuEnabled = !lowMemory
+
+        self.modelOCR = llama_model_load_from_file(path, modelParams)
+        if self.modelOCR == nil && !lowMemory {
+            modelParams.n_gpu_layers = 0
+            self.modelOCR = llama_model_load_from_file(path, modelParams)
+            self.ocrGpuEnabled = false
+        }
+
+        guard let modelOCR = self.modelOCR else {
+            throw LlamaError.failedToLoadModel
+        }
+
+        var ctxParams = llama_context_default_params()
+        ctxParams.n_ctx = lowMemory ? 2048 : 4096
+        ctxParams.n_batch = 512
+
+        self.contextOCR = llama_init_from_model(modelOCR, ctxParams)
+        guard self.contextOCR != nil else {
+            throw LlamaError.failedToInitContext
+        }
+
+        initializeVisionOCRContext(model: modelOCR, modelPath: path, auxiliaryPath: auxiliaryPath, lowMemory: lowMemory)
+    }
+
+    func unloadOCRModel() {
+        if let visionOCRContext = visionOCRContext {
+            mtmd_free(visionOCRContext)
+            self.visionOCRContext = nil
+        }
+        if let contextOCR = contextOCR {
+            llama_free(contextOCR)
+            self.contextOCR = nil
+        }
+        if let modelOCR = modelOCR {
+            llama_model_free(modelOCR)
+            self.modelOCR = nil
+        }
+        ocrGpuEnabled = false
+    }
+
+    func isOCRModelLoaded() -> Bool {
+        contextOCR != nil && modelOCR != nil
+    }
+
+    func extractTextFromImageData(_ imageData: Data) async throws -> String {
+        guard !imageData.isEmpty else { return "" }
+        guard let contextOCR = self.contextOCR, let modelOCR = self.modelOCR else {
+            throw LlamaError.notLoaded
+        }
+        guard let visionOCRContext = self.visionOCRContext else {
+            throw LlamaError.ocrVisionUnavailable
+        }
+
+        let marker = visionOCRMarker
+        let prompt = "\(marker)\nExtract all readable text from this document image. Return plain text only."
+        let promptC = strdup(prompt)
+        guard let promptC else { throw LlamaError.decodeFailed }
+        defer { free(promptC) }
+
+        var textInput = mtmd_input_text(text: UnsafePointer(promptC), add_special: true, parse_special: true)
+
+        let bitmap: OpaquePointer? = imageData.withUnsafeBytes { rawBuffer in
+            guard let base = rawBuffer.baseAddress?.assumingMemoryBound(to: UInt8.self) else { return nil }
+            return mtmd_helper_bitmap_init_from_buf(visionOCRContext, base, imageData.count)
+        }
+        guard let bitmap else { throw LlamaError.decodeFailed }
+        defer { mtmd_bitmap_free(bitmap) }
+
+        guard let chunks = mtmd_input_chunks_init() else {
+            throw LlamaError.decodeFailed
+        }
+        defer { mtmd_input_chunks_free(chunks) }
+
+        var bitmapArray: [OpaquePointer?] = [bitmap]
+        let tokenizeRes = bitmapArray.withUnsafeMutableBufferPointer { bitmapPtr -> Int32 in
+            mtmd_tokenize(visionOCRContext, chunks, &textInput, bitmapPtr.baseAddress, 1)
+        }
+        guard tokenizeRes == 0 else {
+            throw LlamaError.decodeFailed
+        }
+
+        if let mem = llama_get_memory(contextOCR) {
+            llama_memory_clear(mem, true)
+        }
+
+        var newNPast: llama_pos = 0
+        let evalRes = mtmd_helper_eval_chunks(
+            visionOCRContext,
+            contextOCR,
+            chunks,
+            0,
+            0,
+            Int32(max(1, Int(llama_n_batch(contextOCR)))),
+            true,
+            &newNPast
+        )
+        guard evalRes == 0 else {
+            throw LlamaError.decodeFailed
+        }
+
+        return try sampleText(
+            context: contextOCR,
+            model: modelOCR,
+            startPos: Int32(newNPast),
+            maxTokens: 768,
+            temperature: 0.1,
+            stopSequences: ["<|im_end|>", "<|endoftext|>", "</s>", "<|user|>", "<|assistant|>"]
+        )
+    }
+
+    func refineOCRText(_ rawText: String) async throws -> String {
+        guard let contextOCR = self.contextOCR, let modelOCR = self.modelOCR else {
+            throw LlamaError.notLoaded
+        }
+        let trimmed = rawText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "" }
+
+        let prompt = """
+        You are an OCR cleanup assistant.
+        Fix OCR mistakes in the provided text, preserve meaning and formatting, and return only corrected text.
+
+        OCR INPUT:
+        \(trimmed)
+
+        CORRECTED OUTPUT:
+        """
+        return try generateText(
+            prompt: prompt,
+            context: contextOCR,
+            model: modelOCR,
+            maxTokens: 512,
+            temperature: 0.2
+        )
+    }
+
     func isGpuEnabled() -> Bool {
-        chatGpuEnabled || embeddingGpuEnabled
+        chatGpuEnabled || embeddingGpuEnabled || ocrGpuEnabled
     }
     
     // MARK: - Completion
@@ -417,6 +571,167 @@ actor LlamaContext {
             return String(data: data, encoding: .utf8) ?? ""
         }
         return ""
+    }
+
+    private func initializeVisionOCRContext(
+        model: OpaquePointer,
+        modelPath: String,
+        auxiliaryPath: String?,
+        lowMemory: Bool
+    ) {
+        if let visionOCRContext = visionOCRContext {
+            mtmd_free(visionOCRContext)
+            self.visionOCRContext = nil
+        }
+
+        let candidates: [String] = [auxiliaryPath, modelPath].compactMap { $0 }
+        guard !candidates.isEmpty else { return }
+
+        var params = mtmd_context_params_default()
+        params.use_gpu = !lowMemory
+        params.print_timings = false
+        params.n_threads = Int32(max(1, min(8, ProcessInfo.processInfo.activeProcessorCount)))
+        params.warmup = false
+        params.media_marker = mtmd_default_marker()
+        params.image_marker = mtmd_default_marker()
+
+        for candidate in candidates {
+            guard let ctx = mtmd_init_from_file(candidate, model, params) else {
+                continue
+            }
+            if mtmd_support_vision(ctx) {
+                visionOCRContext = ctx
+                if let markerPtr = mtmd_default_marker() {
+                    visionOCRMarker = String(cString: markerPtr)
+                } else {
+                    visionOCRMarker = "<__media__>"
+                }
+                return
+            }
+            mtmd_free(ctx)
+        }
+    }
+
+    private func generateText(
+        prompt: String,
+        context: OpaquePointer,
+        model: OpaquePointer,
+        maxTokens: Int,
+        temperature: Float
+    ) throws -> String {
+        let tokens = try tokenize(text: prompt, context: context, model: model, addSpecial: true)
+        if tokens.isEmpty { return "" }
+
+        if let mem = llama_get_memory(context) {
+            llama_memory_clear(mem, true)
+        }
+
+        let chunkSize = max(1, min(512, Int(llama_n_batch(context))))
+        resetBatch(capacity: Int32(chunkSize))
+
+        for i in stride(from: 0, to: tokens.count, by: chunkSize) {
+            let end = min(i + chunkSize, tokens.count)
+            self.batch.n_tokens = 0
+            for idx in i..<end {
+                let isLast = idx == tokens.count - 1
+                if !batchAdd(token: tokens[idx], pos: Int32(idx), logits: isLast) {
+                    throw LlamaError.batchOverflow
+                }
+            }
+            if llama_decode(context, self.batch) != 0 {
+                throw LlamaError.decodeFailed
+            }
+        }
+
+        var sparams = llama_sampler_chain_default_params()
+        let sampler = llama_sampler_chain_init(sparams)
+        defer { llama_sampler_free(sampler) }
+
+        llama_sampler_chain_add(sampler, llama_sampler_init_top_k(40))
+        llama_sampler_chain_add(sampler, llama_sampler_init_top_p(0.9, 1))
+        llama_sampler_chain_add(sampler, llama_sampler_init_temp(temperature))
+        llama_sampler_chain_add(sampler, llama_sampler_init_dist(LLAMA_DEFAULT_SEED))
+
+        let n_ctx = Int32(llama_n_ctx(context))
+        var nCur = Int32(tokens.count)
+        var decoded = 0
+        var output = ""
+
+        while decoded < maxTokens && nCur < n_ctx {
+            let token = llama_sampler_sample(sampler, context, -1)
+            if llama_vocab_is_eog(llama_model_get_vocab(model), token) {
+                break
+            }
+
+            let piece = tokenToPiece(token: token, model: model)
+            output += piece
+
+            self.batch.n_tokens = 0
+            if !batchAdd(token: token, pos: nCur, logits: true) {
+                throw LlamaError.batchOverflow
+            }
+            nCur += 1
+            decoded += 1
+
+            if llama_decode(context, self.batch) != 0 {
+                throw LlamaError.decodeFailed
+            }
+        }
+
+        return output.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func sampleText(
+        context: OpaquePointer,
+        model: OpaquePointer,
+        startPos: Int32,
+        maxTokens: Int,
+        temperature: Float,
+        stopSequences: [String]
+    ) throws -> String {
+        var sparams = llama_sampler_chain_default_params()
+        let sampler = llama_sampler_chain_init(sparams)
+        defer { llama_sampler_free(sampler) }
+
+        llama_sampler_chain_add(sampler, llama_sampler_init_top_k(40))
+        llama_sampler_chain_add(sampler, llama_sampler_init_top_p(0.9, 1))
+        llama_sampler_chain_add(sampler, llama_sampler_init_temp(temperature))
+        llama_sampler_chain_add(sampler, llama_sampler_init_dist(LLAMA_DEFAULT_SEED))
+
+        let nCtx = Int32(llama_n_ctx(context))
+        var nCur = startPos
+        var decoded = 0
+        var output = ""
+
+        while decoded < maxTokens && nCur < nCtx {
+            let token = llama_sampler_sample(sampler, context, -1)
+            if llama_vocab_is_eog(llama_model_get_vocab(model), token) {
+                break
+            }
+
+            let piece = tokenToPiece(token: token, model: model)
+            output += piece
+            if stopSequences.contains(where: { output.hasSuffix($0) || piece.contains($0) }) {
+                break
+            }
+
+            self.batch.n_tokens = 0
+            if !batchAdd(token: token, pos: nCur, logits: true) {
+                throw LlamaError.batchOverflow
+            }
+            nCur += 1
+            decoded += 1
+
+            if llama_decode(context, self.batch) != 0 {
+                throw LlamaError.decodeFailed
+            }
+        }
+
+        var cleaned = output
+        for token in stopSequences {
+            cleaned = cleaned.replacingOccurrences(of: token, with: "")
+        }
+        return cleaned.trimmingCharacters(in: .whitespacesAndNewlines)
     }
     
     func applyTemplate(messages: [[String: String]]) -> String {

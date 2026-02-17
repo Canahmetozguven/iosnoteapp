@@ -8,7 +8,7 @@ IOS_MIN_OS_VERSION="${IOS_MIN_OS_VERSION:-17.0}"
 
 BUILD_SHARED_LIBS=OFF
 LLAMA_BUILD_EXAMPLES=OFF
-LLAMA_BUILD_TOOLS=OFF
+LLAMA_BUILD_TOOLS=ON
 LLAMA_BUILD_TESTS=OFF
 LLAMA_BUILD_SERVER=OFF
 GGML_METAL=ON
@@ -81,6 +81,8 @@ setup_framework_structure() {
   cp ggml/include/ggml-cpu.h     "${header_path}"
   cp ggml/include/ggml-blas.h    "${header_path}"
   cp ggml/include/gguf.h         "${header_path}"
+  cp tools/mtmd/mtmd.h           "${header_path}"
+  cp tools/mtmd/mtmd-helper.h    "${header_path}"
 
   cat > "${module_path}module.modulemap" <<'EOF'
 framework module llama {
@@ -92,6 +94,8 @@ framework module llama {
     header "ggml-cpu.h"
     header "ggml-blas.h"
     header "gguf.h"
+    header "mtmd.h"
+    header "mtmd-helper.h"
 
     link "c++"
     link framework "Accelerate"
@@ -162,6 +166,7 @@ combine_static_libraries_to_dylib() {
     "${base_dir}/${build_dir}/ggml/src/${release_dir}/libggml-cpu.a"
     "${base_dir}/${build_dir}/ggml/src/ggml-metal/${release_dir}/libggml-metal.a"
     "${base_dir}/${build_dir}/ggml/src/ggml-blas/${release_dir}/libggml-blas.a"
+    "${base_dir}/${build_dir}/tools/mtmd/${release_dir}/libmtmd.a"
   )
 
   local temp_dir="${base_dir}/${build_dir}/temp"
@@ -205,7 +210,7 @@ cmake -B build-ios-sim -G Xcode \
   -DCMAKE_C_FLAGS="${COMMON_C_FLAGS}" \
   -DCMAKE_CXX_FLAGS="${COMMON_CXX_FLAGS}" \
   -S .
-cmake --build build-ios-sim --config Release -- -quiet
+cmake --build build-ios-sim --config Release --target llama mtmd -- -quiet
 
 echo "Building for iOS devices..."
 cmake -B build-ios-device -G Xcode \
@@ -218,7 +223,7 @@ cmake -B build-ios-device -G Xcode \
   -DCMAKE_C_FLAGS="${COMMON_C_FLAGS}" \
   -DCMAKE_CXX_FLAGS="${COMMON_CXX_FLAGS}" \
   -S .
-cmake --build build-ios-device --config Release -- -quiet
+cmake --build build-ios-device --config Release --target llama mtmd -- -quiet
 
 echo "Setting up framework structures..."
 setup_framework_structure "build-ios-sim" "${IOS_MIN_OS_VERSION}"
@@ -238,4 +243,3 @@ xcodebuild -create-xcframework \
   -output "$(pwd)/build-apple/llama.xcframework"
 
 echo "Done: build-apple/llama.xcframework"
-

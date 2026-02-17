@@ -5,6 +5,7 @@ struct ChatView: View {
     @Environment(GlobalViewModel.self) private var vm
     @Environment(\.modelContext) private var modelContext
     @Query private var notes: [Note]
+    @Query private var knowledgeChunks: [KnowledgeChunk]
 
     @State private var inputText = ""
     @State private var showingSessionSheet = false
@@ -74,10 +75,12 @@ struct ChatView: View {
         .onAppear {
             vm.bootstrapIfNeeded(modelContext: modelContext)
             vm.startAutoIndexIfNeeded(notes: notes, modelContext: modelContext)
+            vm.startAutoIndexKnowledgeIfNeeded(chunks: knowledgeChunks, modelContext: modelContext)
         }
         .onChange(of: vm.isEmbeddingModelLoaded) {
             if vm.isEmbeddingModelLoaded {
                 vm.startAutoIndexIfNeeded(notes: notes, modelContext: modelContext)
+                vm.startAutoIndexKnowledgeIfNeeded(chunks: knowledgeChunks, modelContext: modelContext)
             }
         }
     }
@@ -103,7 +106,11 @@ struct ChatView: View {
             ScrollView {
                 LazyVStack(spacing: 12) {
                     ForEach(vm.chatMessages, id: \.id) { msg in
-                        MessageBubble(message: msg)
+                        MessageBubble(
+                            message: msg,
+                            sourceNoteTitles: sourceNoteTitles(for: msg),
+                            sourceChunkTitles: sourceChunkTitles(for: msg)
+                        )
                             .id(msg.id)
                     }
                 }
@@ -177,7 +184,28 @@ struct ChatView: View {
         guard !text.isEmpty else { return }
         inputText = ""
         isInputFocused = false
-        vm.sendMessage(text: text, notes: notes, modelContext: modelContext)
+        vm.sendMessage(text: text, notes: notes, knowledgeChunks: knowledgeChunks, modelContext: modelContext)
+    }
+
+    private func sourceNoteTitles(for message: ChatMessage) -> [String] {
+        guard !message.sourceNoteIds.isEmpty else { return [] }
+        let byId = Dictionary(uniqueKeysWithValues: notes.map { ($0.id, $0) })
+        return message.sourceNoteIds.compactMap { id in
+            guard let note = byId[id] else { return nil }
+            let title = note.title.trimmingCharacters(in: .whitespacesAndNewlines)
+            return title.isEmpty ? "Untitled Note" : title
+        }
+    }
+
+    private func sourceChunkTitles(for message: ChatMessage) -> [String] {
+        guard !message.sourceKnowledgeChunkIds.isEmpty else { return [] }
+        let byId = Dictionary(uniqueKeysWithValues: knowledgeChunks.map { ($0.id, $0) })
+        return message.sourceKnowledgeChunkIds.compactMap { id in
+            guard let chunk = byId[id] else { return nil }
+            let docTitle = chunk.document?.title.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let resolved = docTitle.isEmpty ? "Document" : docTitle
+            return "\(resolved) (chunk \(chunk.chunkIndex + 1))"
+        }
     }
 }
 

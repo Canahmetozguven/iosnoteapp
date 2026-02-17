@@ -39,14 +39,14 @@ struct OnboardingView: View {
             tint: AppTheme.greenSuccess
         ),
         OnboardingStep(
-            title: "Backup and Manage Files",
-            detail: "Connect Google Drive in Settings for backup and restore, and review available files in the Files tab.",
+            title: "Build a Knowledge Base",
+            detail: "Import PDFs, images, and text into Knowledge Base. OCR extracts content and Chat retrieves relevant chunks.",
             points: [
-                "Sync manually any time from Settings.",
-                "First connect can auto-restore when local data is empty.",
-                "Use Files to inspect local and Drive items."
+                "Import from Files, Photos, or connected Google Drive.",
+                "OCR model is used first when loaded; Vision OCR is fallback.",
+                "Chat uses both Notes and Knowledge Base chunks as context."
             ],
-            symbol: "icloud.and.arrow.up.fill",
+            symbol: "books.vertical.fill",
             tint: AppTheme.primaryDark
         )
     ]

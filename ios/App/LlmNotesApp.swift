@@ -12,9 +12,11 @@ struct LlmNotesApp: App {
 
     var sharedModelContainer: ModelContainer = {
         let schema = Schema([
-            SchemaV2.Note.self,
-            SchemaV2.ChatSession.self,
-            SchemaV2.ChatMessage.self
+            SchemaV3.Note.self,
+            SchemaV3.ChatSession.self,
+            SchemaV3.ChatMessage.self,
+            SchemaV3.KnowledgeDocument.self,
+            SchemaV3.KnowledgeChunk.self
         ])
         let modelConfiguration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
 

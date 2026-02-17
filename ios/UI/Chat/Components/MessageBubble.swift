@@ -2,6 +2,8 @@ import SwiftUI
 
 struct MessageBubble: View {
     let message: ChatMessage
+    var sourceNoteTitles: [String] = []
+    var sourceChunkTitles: [String] = []
 
     var body: some View {
         HStack {
@@ -31,6 +33,19 @@ struct MessageBubble: View {
                         .foregroundStyle(.white)
                         .textSelection(.enabled)
                 }
+
+                if message.role == "assistant", !sourceItems.isEmpty {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Sources")
+                            .font(.caption2.weight(.semibold))
+                            .foregroundStyle(.white.opacity(0.75))
+                        ForEach(sourceItems, id: \.self) { source in
+                            Text("• \(source)")
+                                .font(.caption2)
+                                .foregroundStyle(.white.opacity(0.85))
+                        }
+                    }
+                }
             }
             .padding(12)
             .background(backgroundColor)
@@ -46,5 +61,9 @@ struct MessageBubble: View {
 
     private var backgroundColor: Color {
         message.role == "user" ? AppTheme.bubbleUser : AppTheme.bubbleAi
+    }
+
+    private var sourceItems: [String] {
+        Array((sourceNoteTitles + sourceChunkTitles).prefix(4))
     }
 }

@@ -4,6 +4,8 @@ struct ExportPayloadV1: Codable {
     var version: Int
     var exportedAt: Date
     var notes: [ExportNoteV1]
+    var knowledgeDocuments: [ExportKnowledgeDocumentV1]?
+    var knowledgeChunks: [ExportKnowledgeChunkV1]?
     var chatSessions: [ExportChatSessionV1]?
     var chatMessages: [ExportChatMessageV1]
 }
@@ -34,14 +36,45 @@ struct ExportChatMessageV1: Codable {
     var content: String
     var thoughtProcess: String?
     var sourceNoteIds: [UUID]
+    var sourceKnowledgeChunkIds: [UUID]?
     var createdAt: Date
     var sessionId: UUID?
+}
+
+struct ExportKnowledgeDocumentV1: Codable {
+    var id: UUID
+    var title: String
+    var sourceType: String
+    var mimeType: String
+    var localRelativePath: String
+    var driveFileId: String?
+    var extractionStatus: String
+    var extractionError: String?
+    var extractionEngine: String?
+    var contentHash: String?
+    var createdAt: Date
+    var updatedAt: Date
+}
+
+struct ExportKnowledgeChunkV1: Codable {
+    var id: UUID
+    var documentId: UUID?
+    var chunkIndex: Int
+    var text: String
+    var embedding: [Float]?
+    var embeddingModelId: String?
+    var embeddingUpdatedAt: Date?
+    var embeddingContentHash: String?
+    var createdAt: Date
+    var updatedAt: Date
 }
 
 struct ExportManifestV1: Codable {
     var version: Int
     var createdAt: Date
     var noteCount: Int
+    var knowledgeDocumentCount: Int?
+    var knowledgeChunkCount: Int?
     var chatSessionCount: Int?
     var chatMessageCount: Int
     var appVersion: String?

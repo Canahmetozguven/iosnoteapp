@@ -31,10 +31,20 @@ final class ModelStorage {
         return url
     }
 
+    func auxiliaryFileURL(for item: ModelCatalogItem) throws -> URL? {
+        guard let auxiliary = item.auxiliaryFilename, !auxiliary.isEmpty else { return nil }
+        let dir = try modelsDirectory(for: item.kind)
+        return dir.appendingPathComponent(auxiliary, isDirectory: false)
+    }
+
     func exists(_ item: ModelCatalogItem) -> Bool {
         do {
             let url = try fileURL(for: item)
-            return FileManager.default.fileExists(atPath: url.path)
+            guard FileManager.default.fileExists(atPath: url.path) else { return false }
+            if let auxURL = try auxiliaryFileURL(for: item) {
+                return FileManager.default.fileExists(atPath: auxURL.path)
+            }
+            return true
         } catch {
             return false
         }
@@ -44,8 +54,13 @@ final class ModelStorage {
         do {
             let url = try fileURL(for: item)
             let attrs = try FileManager.default.attributesOfItem(atPath: url.path)
-            if let size = attrs[.size] as? NSNumber { return size.int64Value }
-            return nil
+            var total = (attrs[.size] as? NSNumber)?.int64Value ?? 0
+            if let auxURL = try auxiliaryFileURL(for: item),
+               FileManager.default.fileExists(atPath: auxURL.path) {
+                let auxAttrs = try FileManager.default.attributesOfItem(atPath: auxURL.path)
+                total += (auxAttrs[.size] as? NSNumber)?.int64Value ?? 0
+            }
+            return total > 0 ? total : nil
         } catch {
             return nil
         }
@@ -55,6 +70,10 @@ final class ModelStorage {
         let url = try fileURL(for: item)
         if FileManager.default.fileExists(atPath: url.path) {
             try FileManager.default.removeItem(at: url)
+        }
+        if let auxURL = try auxiliaryFileURL(for: item),
+           FileManager.default.fileExists(atPath: auxURL.path) {
+            try FileManager.default.removeItem(at: auxURL)
         }
     }
 
@@ -75,4 +94,3 @@ final class ModelStorage {
         excludeFromBackup(url)
     }
 }
-

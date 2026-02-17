@@ -14,11 +14,13 @@ enum BackupError: Error {
 final class BackupExporter {
     func exportZip(modelContext: ModelContext) throws -> URL {
         let notes = try modelContext.fetch(FetchDescriptor<Note>())
+        let documents = try modelContext.fetch(FetchDescriptor<KnowledgeDocument>())
+        let chunks = try modelContext.fetch(FetchDescriptor<KnowledgeChunk>())
         let sessions = try modelContext.fetch(FetchDescriptor<ChatSession>())
         let messages = try modelContext.fetch(FetchDescriptor<ChatMessage>())
 
         let payload = ExportPayloadV1(
-            version: 2,
+            version: 3,
             exportedAt: Date(),
             notes: notes.map { n in
                 ExportNoteV1(
@@ -32,6 +34,36 @@ final class BackupExporter {
                     embeddingModelId: n.embeddingModelId,
                     embeddingUpdatedAt: n.embeddingUpdatedAt,
                     embeddingContentHash: n.embeddingContentHash
+                )
+            },
+            knowledgeDocuments: documents.map { d in
+                ExportKnowledgeDocumentV1(
+                    id: d.id,
+                    title: d.title,
+                    sourceType: d.sourceType,
+                    mimeType: d.mimeType,
+                    localRelativePath: d.localRelativePath,
+                    driveFileId: d.driveFileId,
+                    extractionStatus: d.extractionStatus,
+                    extractionError: d.extractionError,
+                    extractionEngine: d.extractionEngine,
+                    contentHash: d.contentHash,
+                    createdAt: d.createdAt,
+                    updatedAt: d.updatedAt
+                )
+            },
+            knowledgeChunks: chunks.map { c in
+                ExportKnowledgeChunkV1(
+                    id: c.id,
+                    documentId: c.document?.id,
+                    chunkIndex: c.chunkIndex,
+                    text: c.text,
+                    embedding: c.embedding,
+                    embeddingModelId: c.embeddingModelId,
+                    embeddingUpdatedAt: c.embeddingUpdatedAt,
+                    embeddingContentHash: c.embeddingContentHash,
+                    createdAt: c.createdAt,
+                    updatedAt: c.updatedAt
                 )
             },
             chatSessions: sessions.map { s in
@@ -49,6 +81,7 @@ final class BackupExporter {
                     content: m.content,
                     thoughtProcess: m.thoughtProcess,
                     sourceNoteIds: m.sourceNoteIds,
+                    sourceKnowledgeChunkIds: m.sourceKnowledgeChunkIds,
                     createdAt: m.createdAt,
                     sessionId: m.session?.id
                 )
@@ -56,9 +89,11 @@ final class BackupExporter {
         )
 
         let manifest = ExportManifestV1(
-            version: 2,
+            version: 3,
             createdAt: Date(),
             noteCount: notes.count,
+            knowledgeDocumentCount: documents.count,
+            knowledgeChunkCount: chunks.count,
             chatSessionCount: sessions.count,
             chatMessageCount: messages.count,
             appVersion: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String
@@ -106,9 +141,10 @@ final class BackupExporter {
         )
 
         if let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first {
-            let urls = (try? FileManager.default.contentsOfDirectory(at: docs, includingPropertiesForKeys: [.isRegularFileKey], options: [.skipsHiddenFiles])) ?? []
+            let urls = recursiveDocumentFiles(in: docs)
             for file in urls where !file.hasDirectoryPath {
-                let entryPath = "Documents/\(file.lastPathComponent)"
+                let relative = file.path.replacingOccurrences(of: docs.path + "/", with: "")
+                let entryPath = "Documents/\(relative)"
                 _ = try? archive.addEntry(with: entryPath, fileURL: file, compressionMethod: .deflate)
             }
         }
@@ -120,5 +156,16 @@ final class BackupExporter {
         try exportData.write(to: jsonURL, options: .atomic)
         return jsonURL
         #endif
+    }
+
+    private func recursiveDocumentFiles(in root: URL) -> [URL] {
+        guard let enumerator = FileManager.default.enumerator(at: root, includingPropertiesForKeys: [.isRegularFileKey], options: [.skipsHiddenFiles]) else {
+            return []
+        }
+        var files: [URL] = []
+        for case let url as URL in enumerator {
+            files.append(url)
+        }
+        return files
     }
 }

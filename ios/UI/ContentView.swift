@@ -20,10 +20,10 @@ struct ContentView: View {
                     }
 
                     NavigationStack {
-                        FilesView()
+                        KnowledgeBaseView()
                     }
                     .tabItem {
-                        Label("Files", systemImage: "folder")
+                        Label("Knowledge", systemImage: "books.vertical")
                     }
                 }
                 .tint(AppTheme.primary)

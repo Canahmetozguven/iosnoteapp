@@ -53,6 +53,45 @@ final class BackupImporter {
             ))
         }
 
+        var documentsById: [UUID: KnowledgeDocument] = [:]
+        if let exportedDocuments = payload.knowledgeDocuments {
+            for d in exportedDocuments {
+                let document = KnowledgeDocument(
+                    id: d.id,
+                    title: d.title,
+                    sourceType: d.sourceType,
+                    mimeType: d.mimeType,
+                    localRelativePath: d.localRelativePath,
+                    driveFileId: d.driveFileId,
+                    extractionStatus: d.extractionStatus,
+                    extractionError: d.extractionError,
+                    extractionEngine: d.extractionEngine,
+                    contentHash: d.contentHash,
+                    createdAt: d.createdAt,
+                    updatedAt: d.updatedAt
+                )
+                modelContext.insert(document)
+                documentsById[d.id] = document
+            }
+        }
+
+        if let exportedChunks = payload.knowledgeChunks {
+            for c in exportedChunks {
+                modelContext.insert(KnowledgeChunk(
+                    id: c.id,
+                    chunkIndex: c.chunkIndex,
+                    text: c.text,
+                    embedding: c.embedding,
+                    embeddingModelId: c.embeddingModelId,
+                    embeddingUpdatedAt: c.embeddingUpdatedAt,
+                    embeddingContentHash: c.embeddingContentHash,
+                    createdAt: c.createdAt,
+                    updatedAt: c.updatedAt,
+                    document: c.documentId.flatMap { documentsById[$0] }
+                ))
+            }
+        }
+
         var sessionsById: [UUID: ChatSession] = [:]
         if let exportedSessions = payload.chatSessions, !exportedSessions.isEmpty {
             for s in exportedSessions {
@@ -82,6 +121,7 @@ final class BackupImporter {
                 content: m.content,
                 thoughtProcess: m.thoughtProcess,
                 sourceNoteIds: m.sourceNoteIds,
+                sourceKnowledgeChunkIds: m.sourceKnowledgeChunkIds ?? [],
                 createdAt: m.createdAt,
                 session: session
             ))
@@ -91,28 +131,28 @@ final class BackupImporter {
         if let docsDir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first {
             let restoredDocs = tmpDir.appendingPathComponent("Documents", isDirectory: true)
             if FileManager.default.fileExists(atPath: restoredDocs.path) {
-                let files = (try? FileManager.default.contentsOfDirectory(at: restoredDocs, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles])) ?? []
+                let files = recursiveFiles(in: restoredDocs)
                 for src in files where !src.hasDirectoryPath {
-                    let dest = uniqueDestination(for: src.lastPathComponent, in: docsDir)
+                    let relative = src.path.replacingOccurrences(of: restoredDocs.path + "/", with: "")
+                    let dest = docsDir.appendingPathComponent(relative, isDirectory: false)
+                    try? FileManager.default.createDirectory(at: dest.deletingLastPathComponent(), withIntermediateDirectories: true)
+                    if FileManager.default.fileExists(atPath: dest.path) {
+                        try? FileManager.default.removeItem(at: dest)
+                    }
                     try? FileManager.default.copyItem(at: src, to: dest)
                 }
             }
         }
     }
 
-    private func uniqueDestination(for filename: String, in dir: URL) -> URL {
-        let base = dir.appendingPathComponent(filename, isDirectory: false)
-        if !FileManager.default.fileExists(atPath: base.path) {
-            return base
+    private func recursiveFiles(in root: URL) -> [URL] {
+        guard let enumerator = FileManager.default.enumerator(at: root, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles]) else {
+            return []
         }
-        let ext = base.pathExtension
-        let stem = base.deletingPathExtension().lastPathComponent
-        var i = 1
-        while true {
-            let candidateName = ext.isEmpty ? "\(stem)-restored-\(i)" : "\(stem)-restored-\(i).\(ext)"
-            let candidate = dir.appendingPathComponent(candidateName, isDirectory: false)
-            if !FileManager.default.fileExists(atPath: candidate.path) { return candidate }
-            i += 1
+        var files: [URL] = []
+        for case let url as URL in enumerator {
+            files.append(url)
         }
+        return files
     }
 }

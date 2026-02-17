@@ -113,6 +113,17 @@ final class DriveSyncService {
         return try await api.listFiles(inFolderId: folderId, accessToken: token)
     }
 
+    func downloadFileFromSynapsFolder(fileId: String, to localURL: URL) async throws {
+        guard auth.isConnected else {
+            throw DriveAPIError.notAuthenticated
+        }
+        await auth.refreshTokenIfNeeded()
+        guard let token = auth.accessToken else {
+            throw DriveAPIError.notAuthenticated
+        }
+        try await api.downloadFile(fileId: fileId, to: localURL, accessToken: token)
+    }
+
     private func ensureFolderId(accessToken: String) async throws -> String {
         if let cached = defaults.string(forKey: Key.folderId), !cached.isEmpty {
             return cached
@@ -129,11 +140,17 @@ final class DriveSyncService {
     private func isLocalEmpty(modelContext: ModelContext) async throws -> Bool {
         let notes = try modelContext.fetchCount(FetchDescriptor<Note>())
         let msgs = try modelContext.fetchCount(FetchDescriptor<ChatMessage>())
-        if notes > 0 || msgs > 0 { return false }
+        let docs = try modelContext.fetchCount(FetchDescriptor<KnowledgeDocument>())
+        if notes > 0 || msgs > 0 || docs > 0 { return false }
 
         if let docs = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first {
-            let urls = (try? FileManager.default.contentsOfDirectory(at: docs, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles])) ?? []
-            if urls.contains(where: { !$0.hasDirectoryPath }) { return false }
+            if let enumerator = FileManager.default.enumerator(at: docs, includingPropertiesForKeys: nil, options: [.skipsHiddenFiles]) {
+                for case let url as URL in enumerator {
+                    if !url.hasDirectoryPath {
+                        return false
+                    }
+                }
+            }
         }
         return true
     }

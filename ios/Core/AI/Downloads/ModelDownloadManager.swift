@@ -20,10 +20,24 @@ final class ModelDownloadManager: NSObject {
     }()
 
     struct Descriptor: Codable {
+        enum Stage: String, Codable {
+            case primary
+            case auxiliary
+        }
+
         var id: String
         var kind: ModelKind
         var filename: String
         var sha256: String?
+        var url: String
+        var stage: Stage
+        var auxiliaryFilename: String?
+        var auxiliaryURL: String?
+        var auxiliarySha256: String?
+
+        var resumeKey: String {
+            "\(id)__\(filename)"
+        }
     }
 
     // taskId -> descriptor mapping (best-effort; taskDescription is source of truth across restarts)
@@ -59,7 +73,7 @@ final class ModelDownloadManager: NSObject {
     }
 
     func startDownload(_ item: ModelCatalogItem) {
-        guard let url = item.downloadURL else {
+        guard item.downloadURL != nil else {
             Task { @MainActor in
                 self.downloadsVM.setState(.failed(message: "Invalid URL"), for: item.id)
             }
@@ -70,22 +84,35 @@ final class ModelDownloadManager: NSObject {
             self.downloadsVM.setState(.queued, for: item.id)
         }
 
-        let request = URLRequest(url: url)
-        let desc = Descriptor(id: item.id, kind: item.kind, filename: item.filename, sha256: item.sha256)
-        let descString = (try? String(data: JSONEncoder().encode(desc), encoding: .utf8)) ?? item.id
+        let hasAuxiliary = (item.auxiliaryFilename?.isEmpty == false) && (item.auxiliaryURL?.isEmpty == false)
+        let primaryExists = fileExists(kind: item.kind, filename: item.filename)
+        let auxiliaryExists = hasAuxiliary ? fileExists(kind: item.kind, filename: item.auxiliaryFilename ?? "") : true
 
-        if let resumeData = loadResumeData(modelId: item.id) {
-            let task = session.downloadTask(withResumeData: resumeData)
-            task.taskDescription = descString
-            taskToDescriptor[task.taskIdentifier] = desc
-            task.resume()
+        if primaryExists && auxiliaryExists {
+            Task { @MainActor in
+                self.downloadsVM.setState(.completed, for: item.id)
+            }
             return
         }
 
-        let task = session.downloadTask(with: request)
-        task.taskDescription = descString
-        taskToDescriptor[task.taskIdentifier] = desc
-        task.resume()
+        if primaryExists && hasAuxiliary {
+            guard let auxDesc = makeAuxiliaryDescriptor(from: item) else {
+                Task { @MainActor in
+                    self.downloadsVM.setState(.failed(message: "Invalid auxiliary model URL"), for: item.id)
+                }
+                return
+            }
+            enqueueDownload(auxDesc)
+            return
+        }
+
+        guard let primaryDesc = makePrimaryDescriptor(from: item) else {
+            Task { @MainActor in
+                self.downloadsVM.setState(.failed(message: "Invalid model URL"), for: item.id)
+            }
+            return
+        }
+        enqueueDownload(primaryDesc)
     }
 
     func cancelDownload(modelId: String) {
@@ -100,12 +127,12 @@ final class ModelDownloadManager: NSObject {
                 if let dt = t as? URLSessionDownloadTask {
                     dt.cancel { resumeData in
                         if let resumeData {
-                            self.saveResumeData(resumeData, modelId: modelId)
+                            self.saveResumeData(resumeData, key: desc.resumeKey)
                             Task { @MainActor in
                                 self.downloadsVM.setState(.paused(resumeAvailable: true), for: modelId)
                             }
                         } else {
-                            self.deleteResumeData(modelId: modelId)
+                            self.deleteResumeData(key: desc.resumeKey)
                             Task { @MainActor in
                                 self.downloadsVM.setState(.notStarted, for: modelId)
                             }
@@ -113,7 +140,7 @@ final class ModelDownloadManager: NSObject {
                     }
                 } else {
                     t.cancel()
-                    self.deleteResumeData(modelId: modelId)
+                    self.deleteResumeData(key: desc.resumeKey)
                     Task { @MainActor in
                         self.downloadsVM.setState(.notStarted, for: modelId)
                     }
@@ -124,7 +151,7 @@ final class ModelDownloadManager: NSObject {
 
     func deleteDownloaded(_ item: ModelCatalogItem) throws {
         try storage.delete(item)
-        deleteResumeData(modelId: item.id)
+        deleteAllResumeData(modelId: item.id)
         Task { @MainActor in
             self.downloadsVM.setState(.notStarted, for: item.id)
         }
@@ -132,7 +159,7 @@ final class ModelDownloadManager: NSObject {
 
     // MARK: - Resume Data Persistence
 
-    private func resumeFileURL(modelId: String) -> URL? {
+    private func resumeFileURL(key: String) -> URL? {
         guard let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
             return nil
         }
@@ -141,23 +168,36 @@ final class ModelDownloadManager: NSObject {
             try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
             storage.excludeFromBackup(dir)
         }
-        return dir.appendingPathComponent("\(modelId).resume", isDirectory: false)
+        return dir.appendingPathComponent("\(key).resume", isDirectory: false)
     }
 
-    private func loadResumeData(modelId: String) -> Data? {
-        guard let url = resumeFileURL(modelId: modelId) else { return nil }
+    private func loadResumeData(key: String) -> Data? {
+        guard let url = resumeFileURL(key: key) else { return nil }
         return try? Data(contentsOf: url)
     }
 
-    private func saveResumeData(_ data: Data, modelId: String) {
-        guard let url = resumeFileURL(modelId: modelId) else { return }
+    private func saveResumeData(_ data: Data, key: String) {
+        guard let url = resumeFileURL(key: key) else { return }
         try? data.write(to: url, options: .atomic)
         storage.excludeFromBackup(url)
     }
 
-    private func deleteResumeData(modelId: String) {
-        guard let url = resumeFileURL(modelId: modelId) else { return }
+    private func deleteResumeData(key: String) {
+        guard let url = resumeFileURL(key: key) else { return }
         try? FileManager.default.removeItem(at: url)
+    }
+
+    private func deleteAllResumeData(modelId: String) {
+        guard let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first else {
+            return
+        }
+        let dir = base.appendingPathComponent("Models", isDirectory: true).appendingPathComponent(resumeDirName, isDirectory: true)
+        guard let entries = try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil) else {
+            return
+        }
+        for entry in entries where entry.lastPathComponent.hasPrefix("\(modelId)__") {
+            try? FileManager.default.removeItem(at: entry)
+        }
     }
 
     // MARK: - SHA256
@@ -168,6 +208,91 @@ final class ModelDownloadManager: NSObject {
         let digest = SHA256.hash(data: data)
         let hex = digest.map { String(format: "%02x", $0) }.joined()
         return hex.lowercased() == expected.lowercased()
+    }
+
+    private func fileExists(kind: ModelKind, filename: String) -> Bool {
+        guard !filename.isEmpty else { return false }
+        do {
+            let dir = try storage.modelsDirectory(for: kind)
+            let url = dir.appendingPathComponent(filename, isDirectory: false)
+            return FileManager.default.fileExists(atPath: url.path)
+        } catch {
+            return false
+        }
+    }
+
+    private func makePrimaryDescriptor(from item: ModelCatalogItem) -> Descriptor? {
+        guard let url = item.downloadURL else { return nil }
+        return Descriptor(
+            id: item.id,
+            kind: item.kind,
+            filename: item.filename,
+            sha256: item.sha256,
+            url: url.absoluteString,
+            stage: .primary,
+            auxiliaryFilename: item.auxiliaryFilename,
+            auxiliaryURL: item.auxiliaryURL,
+            auxiliarySha256: item.auxiliarySha256
+        )
+    }
+
+    private func makeAuxiliaryDescriptor(from item: ModelCatalogItem) -> Descriptor? {
+        guard let filename = item.auxiliaryFilename, !filename.isEmpty,
+              let url = item.auxiliaryURL, URL(string: url) != nil else {
+            return nil
+        }
+        return Descriptor(
+            id: item.id,
+            kind: item.kind,
+            filename: filename,
+            sha256: item.auxiliarySha256,
+            url: url,
+            stage: .auxiliary,
+            auxiliaryFilename: nil,
+            auxiliaryURL: nil,
+            auxiliarySha256: nil
+        )
+    }
+
+    private func makeAuxiliaryDescriptor(from primary: Descriptor) -> Descriptor? {
+        guard let filename = primary.auxiliaryFilename, !filename.isEmpty,
+              let auxURL = primary.auxiliaryURL, URL(string: auxURL) != nil else {
+            return nil
+        }
+        return Descriptor(
+            id: primary.id,
+            kind: primary.kind,
+            filename: filename,
+            sha256: primary.auxiliarySha256,
+            url: auxURL,
+            stage: .auxiliary,
+            auxiliaryFilename: nil,
+            auxiliaryURL: nil,
+            auxiliarySha256: nil
+        )
+    }
+
+    private func enqueueDownload(_ desc: Descriptor) {
+        guard let url = URL(string: desc.url) else {
+            Task { @MainActor in
+                self.downloadsVM.setState(.failed(message: "Invalid download URL"), for: desc.id)
+            }
+            return
+        }
+
+        let descString = (try? String(data: JSONEncoder().encode(desc), encoding: .utf8)) ?? desc.id
+        if let resumeData = loadResumeData(key: desc.resumeKey) {
+            let task = session.downloadTask(withResumeData: resumeData)
+            task.taskDescription = descString
+            taskToDescriptor[task.taskIdentifier] = desc
+            task.resume()
+            return
+        }
+
+        let task = session.downloadTask(with: URLRequest(url: url))
+        task.taskDescription = descString
+        taskToDescriptor[task.taskIdentifier] = desc
+        task.resume()
     }
 }
 
@@ -211,7 +336,16 @@ extension ModelDownloadManager: URLSessionDownloadDelegate {
                 return
             }
 
-            deleteResumeData(modelId: desc.id)
+            deleteResumeData(key: desc.resumeKey)
+
+            if desc.stage == .primary, let auxDesc = makeAuxiliaryDescriptor(from: desc), !fileExists(kind: auxDesc.kind, filename: auxDesc.filename) {
+                Task { @MainActor in
+                    self.downloadsVM.setState(.queued, for: desc.id)
+                }
+                enqueueDownload(auxDesc)
+                return
+            }
+
             Task { @MainActor in
                 self.downloadsVM.setState(.completed, for: desc.id)
             }

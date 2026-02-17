@@ -5,6 +5,7 @@ struct SettingsView: View {
     @Environment(GlobalViewModel.self) var vm
     @Environment(\.modelContext) private var modelContext
     @Query private var notes: [Note]
+    @Query private var knowledgeChunks: [KnowledgeChunk]
     @AppStorage(OnboardingState.completionKey) private var hasCompletedOnboarding = false
 
     @State private var showingAddCustomModel = false
@@ -91,6 +92,12 @@ struct SettingsView: View {
                             .foregroundStyle(.secondary)
                     }
                     HStack {
+                        Text("Vision Model")
+                        Spacer()
+                        Text(vm.displayName(for: vm.currentOCRModelId))
+                            .foregroundStyle(.secondary)
+                    }
+                    HStack {
                         Text("Chats")
                         Spacer()
                         Text("\(vm.sessions.count)")
@@ -149,6 +156,34 @@ struct SettingsView: View {
                     }
                 }
 
+                Section("Vision Models (OCR/VL)") {
+                    let items = (vm.catalogStore.items(kind: .ocr) + vm.catalogStore.items(kind: .vl))
+                        .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+                    if items.isEmpty {
+                        Text("No vision models in catalog. Add one in Custom Models.")
+                            .foregroundStyle(.secondary)
+                    } else {
+                        ForEach(items) { item in
+                            ModelRow(
+                                item: item,
+                                isActive: vm.currentOCRModelId == item.id && vm.isOCRModelLoaded,
+                                isInstalled: vm.isInstalled(item),
+                                downloadState: vm.downloads.state(for: item.id),
+                                isBusy: vm.isBusy,
+                                onGet: { vm.startDownload(item) },
+                                onCancel: { vm.cancelDownload(modelId: item.id) },
+                                onLoad: { vm.loadOCRModel(item: item) },
+                                onReload: { vm.reloadOCRModel(item: item) },
+                                onDelete: { vm.deleteDownloaded(item) }
+                            )
+                        }
+                    }
+
+                    Text("Vision models are loaded only when needed for document import and auto-offloaded after use.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
                 Section("Custom Models") {
                     Button {
                         showingAddCustomModel = true
@@ -173,11 +208,18 @@ struct SettingsView: View {
 
                 Section("RAG") {
                     let indexedCount = vm.indexedCountForActiveEmbedding(notes: notes)
+                    let indexedChunkCount = vm.indexedKnowledgeChunkCountForActiveEmbedding(chunks: knowledgeChunks)
 
                     HStack {
                         Text("Fresh embeddings")
                         Spacer()
                         Text("\(indexedCount)/\(notes.count) indexed")
+                            .foregroundStyle(.secondary)
+                    }
+                    HStack {
+                        Text("Knowledge chunks")
+                        Spacer()
+                        Text("\(indexedChunkCount)/\(knowledgeChunks.count) indexed")
                             .foregroundStyle(.secondary)
                     }
 
@@ -191,9 +233,14 @@ struct SettingsView: View {
                             .foregroundStyle(.secondary)
                     }
 
-                    Text("Indexing is automatic. Notes are re-embedded after edits and when chat needs fresh context.")
+                    Text("Indexing is automatic. Notes and Knowledge Base chunks are re-embedded when chat needs fresh context.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
+
+                    Button("Reindex Knowledge Base") {
+                        vm.reindexKnowledgeBase(chunks: knowledgeChunks, modelContext: modelContext)
+                    }
+                    .disabled(!vm.isEmbeddingModelLoaded || vm.isIndexing || knowledgeChunks.isEmpty)
                 }
 
                 Section("Help") {
@@ -223,6 +270,7 @@ struct SettingsView: View {
             .onAppear {
                 vm.bootstrapIfNeeded(modelContext: modelContext)
                 vm.startAutoIndexIfNeeded(notes: notes, modelContext: modelContext)
+                vm.startAutoIndexKnowledgeIfNeeded(chunks: knowledgeChunks, modelContext: modelContext)
             }
             .sheet(isPresented: $showingAddCustomModel) {
                 AddCustomModelSheet(vm: vm)
@@ -352,6 +400,8 @@ private struct AddCustomModelSheet: View {
                 Picker("Kind", selection: $kind) {
                     Text("Chat").tag(ModelKind.chat)
                     Text("Embedding").tag(ModelKind.embedding)
+                    Text("OCR").tag(ModelKind.ocr)
+                    Text("VL").tag(ModelKind.vl)
                 }
 
                 TextField("Name", text: $name)
@@ -408,6 +458,10 @@ private struct AddCustomModelSheet: View {
             name: name.trimmingCharacters(in: .whitespacesAndNewlines),
             subtitle: subtitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : subtitle,
             filename: filename.trimmingCharacters(in: .whitespacesAndNewlines),
+            auxiliaryFilename: nil,
+            auxiliaryURL: nil,
+            auxiliarySha256: nil,
+            modality: kind == .ocr ? "vision_ocr" : (kind == .vl ? "vision" : nil),
             url: url.trimmingCharacters(in: .whitespacesAndNewlines),
             sizeBytes: nil,
             sha256: sha256.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : sha256
