@@ -683,7 +683,7 @@ actor LlamaContext {
             }
         }
 
-        let sampler: OpaquePointer?
+        let sampler: UnsafeMutablePointer<llama_sampler>?
         if temperature <= 0.0001 {
             sampler = llama_sampler_init_greedy()
         } else {
@@ -735,7 +735,7 @@ actor LlamaContext {
         temperature: Float,
         stopSequences: [String]
     ) throws -> String {
-        let sampler: OpaquePointer?
+        let sampler: UnsafeMutablePointer<llama_sampler>?
         if temperature <= 0.0001 {
             sampler = llama_sampler_init_greedy()
         } else {
