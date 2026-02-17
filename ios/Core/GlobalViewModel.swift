@@ -1013,7 +1013,16 @@ class GlobalViewModel {
         do {
             let auxiliaryURL = ((try? ModelStorage.shared.auxiliaryFileURL(for: item)) ?? nil)
             let auxiliaryPath = auxiliaryURL?.path
-            try await llamaContext.loadOCRModel(path: path, auxiliaryPath: auxiliaryPath, lowMemory: isLowPowerMode)
+            do {
+                try await llamaContext.loadOCRModel(path: path, auxiliaryPath: auxiliaryPath, lowMemory: isLowPowerMode)
+            } catch {
+                // Retry OCR/VL loading in low-memory mode for better device compatibility.
+                if !isLowPowerMode {
+                    try await llamaContext.loadOCRModel(path: path, auxiliaryPath: auxiliaryPath, lowMemory: true)
+                } else {
+                    throw error
+                }
+            }
             if !(await llamaContext.hasVisionOCRContext()) {
                 throw LlamaError.ocrVisionUnavailable
             }

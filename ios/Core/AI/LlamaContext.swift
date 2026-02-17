@@ -216,8 +216,9 @@ actor LlamaContext {
         }
 
         var ctxParams = llama_context_default_params()
-        ctxParams.n_ctx = lowMemory ? 2048 : 4096
-        ctxParams.n_batch = 512
+        // OCR/VL tasks use short prompts; keep context smaller for better load reliability on iOS.
+        ctxParams.n_ctx = lowMemory ? 1024 : 2048
+        ctxParams.n_batch = 256
 
         self.contextOCR = llama_init_from_model(modelOCR, ctxParams)
         guard self.contextOCR != nil else {
