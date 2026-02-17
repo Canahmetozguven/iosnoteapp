@@ -397,7 +397,7 @@ private extension ModelDownloadManager {
     func isGGUFFile(fileURL: URL) -> Bool {
         guard let handle = try? FileHandle(forReadingFrom: fileURL) else { return false }
         defer { try? handle.close() }
-        guard let data = try? handle.read(upToCount: 4), let data, data.count == 4 else { return false }
+        guard let data = try? handle.read(upToCount: 4), data.count == 4 else { return false }
         return data == Data([0x47, 0x47, 0x55, 0x46]) // "GGUF"
     }
 

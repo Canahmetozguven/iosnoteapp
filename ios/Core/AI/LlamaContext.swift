@@ -230,7 +230,7 @@ actor LlamaContext {
     private func isGGUFFile(path: String) -> Bool {
         guard let handle = FileHandle(forReadingAtPath: path) else { return false }
         defer { try? handle.close() }
-        guard let data = try? handle.read(upToCount: 4), let data, data.count == 4 else { return false }
+        guard let data = try? handle.read(upToCount: 4), data.count == 4 else { return false }
         let expected = Data([0x47, 0x47, 0x55, 0x46]) // "GGUF"
         return data == expected
     }
