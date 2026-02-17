@@ -56,6 +56,10 @@ class GlobalViewModel {
         isChatModelLoading || isEmbeddingModelLoading || isOCRModelLoading || isGenerating || isIndexing || isImportingKnowledge
     }
 
+    var hasLoadedModels: Bool {
+        isChatModelLoaded || isEmbeddingModelLoaded || isOCRModelLoaded
+    }
+
     var currentChatModelId: String? = nil
     var currentEmbeddingModelId: String? = nil
     var currentOCRModelId: String? = nil
@@ -281,6 +285,14 @@ class GlobalViewModel {
     func unloadOCRModel() {
         Task { @MainActor in
             await unloadOCRModelAsync(clearSelection: true)
+        }
+    }
+
+    func offloadAllModels() {
+        Task { @MainActor in
+            await unloadChatModelAsync(clearSelection: false)
+            await unloadEmbeddingModelAsync(clearSelection: false)
+            await unloadOCRModelAsync(clearSelection: false)
         }
     }
 
@@ -954,7 +966,7 @@ class GlobalViewModel {
                 defaults.set(item.id, forKey: PreferenceKey.activeChatModelId)
             }
         } catch {
-            modelError = error.localizedDescription
+            modelError = buildModelLoadError(error: error, path: path, modelName: item.name)
             isChatModelLoaded = false
         }
 
@@ -980,7 +992,7 @@ class GlobalViewModel {
                 defaults.set(item.id, forKey: PreferenceKey.activeEmbeddingModelId)
             }
         } catch {
-            modelError = error.localizedDescription
+            modelError = buildModelLoadError(error: error, path: path, modelName: item.name)
             isEmbeddingModelLoaded = false
         }
 
@@ -1012,7 +1024,7 @@ class GlobalViewModel {
                 defaults.set(item.id, forKey: PreferenceKey.activeOCRModelId)
             }
         } catch {
-            modelError = error.localizedDescription
+            modelError = buildModelLoadError(error: error, path: path, modelName: item.name)
             isOCRModelLoaded = false
         }
 
@@ -1112,6 +1124,28 @@ class GlobalViewModel {
 
     private func noteContentHash(_ note: Note) -> String {
         noteContentHash(title: note.title, content: note.content)
+    }
+
+    private func buildModelLoadError(error: Error, path: String, modelName: String) -> String {
+        let filename = URL(fileURLWithPath: path).lastPathComponent
+        var sizeText = "unknown size"
+        if let attrs = try? FileManager.default.attributesOfItem(atPath: path),
+           let fileSize = (attrs[.size] as? NSNumber)?.int64Value {
+            sizeText = ByteCountFormatter.string(fromByteCount: fileSize, countStyle: .file)
+        }
+
+        if let llamaError = error as? LlamaError {
+            switch llamaError {
+            case .invalidModelFile:
+                return "\(modelName) is not a valid GGUF file (\(filename), \(sizeText)). Re-download this model."
+            case .failedToLoadModel:
+                return "Could not load \(modelName) (\(filename), \(sizeText)). File may be incompatible or incomplete. Re-download and try again."
+            default:
+                return llamaError.localizedDescription
+            }
+        }
+
+        return error.localizedDescription
     }
 
     private func noteContentHash(title: String, content: String) -> String {

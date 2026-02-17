@@ -129,10 +129,12 @@ struct SettingsView: View {
                                 isInstalled: vm.isInstalled(item),
                                 downloadState: vm.downloads.state(for: item.id),
                                 isBusy: vm.isBusy,
+                                isEnabled: true,
                                 onGet: { vm.startDownload(item) },
                                 onCancel: { vm.cancelDownload(modelId: item.id) },
                                 onLoad: { vm.loadChatModel(item: item) },
                                 onReload: { vm.reloadChatModel(item: item) },
+                                onOffload: { vm.offloadAllModels() },
                                 onDelete: { vm.deleteDownloaded(item) }
                             )
                         }
@@ -152,10 +154,12 @@ struct SettingsView: View {
                                 isInstalled: vm.isInstalled(item),
                                 downloadState: vm.downloads.state(for: item.id),
                                 isBusy: vm.isBusy,
+                                isEnabled: true,
                                 onGet: { vm.startDownload(item) },
                                 onCancel: { vm.cancelDownload(modelId: item.id) },
                                 onLoad: { vm.loadEmbeddingModel(item: item) },
                                 onReload: { vm.reloadEmbeddingModel(item: item) },
+                                onOffload: { vm.offloadAllModels() },
                                 onDelete: { vm.deleteDownloaded(item) }
                             )
                         }
@@ -178,10 +182,12 @@ struct SettingsView: View {
                                 isInstalled: vm.isInstalled(item),
                                 downloadState: vm.downloads.state(for: item.id),
                                 isBusy: vm.isBusy,
+                                isEnabled: vm.useModelOCRForImports,
                                 onGet: { vm.startDownload(item) },
                                 onCancel: { vm.cancelDownload(modelId: item.id) },
                                 onLoad: { vm.loadOCRModel(item: item) },
                                 onReload: { vm.reloadOCRModel(item: item) },
+                                onOffload: { vm.offloadAllModels() },
                                 onDelete: { vm.deleteDownloaded(item) }
                             )
                         }
@@ -190,6 +196,12 @@ struct SettingsView: View {
                     Text("Default OCR uses Apple Vision. Enable the toggle above to use the selected local OCR/VL model for imports.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
+
+                    if !vm.useModelOCRForImports {
+                        Text("Vision model actions are locked while Apple Vision OCR is active.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
 
                     Text("When enabled, vision models load only during import and auto-offload after use.")
                         .font(.caption)
@@ -297,11 +309,13 @@ private struct ModelRow: View {
     let isInstalled: Bool
     let downloadState: DownloadState
     let isBusy: Bool
+    let isEnabled: Bool
 
     let onGet: () -> Void
     let onCancel: () -> Void
     let onLoad: () -> Void
     let onReload: () -> Void
+    let onOffload: () -> Void
     let onDelete: () -> Void
     @State private var showingDeleteConfirm = false
 
@@ -326,8 +340,10 @@ private struct ModelRow: View {
             } label: {
                 Label("Actions", systemImage: "ellipsis.circle")
             }
+            .disabled(!isEnabled)
             .buttonStyle(.bordered)
         }
+        .opacity(isEnabled ? 1.0 : 0.45)
         .alert("Delete Model?", isPresented: $showingDeleteConfirm) {
             Button("Cancel", role: .cancel) {}
             Button("Delete", role: .destructive) {
@@ -382,10 +398,16 @@ private struct ModelRow: View {
                 }
                 Button("Reload Model") { onReload() }
                     .disabled(isBusy)
-                Button("Delete Model", role: .destructive) {
-                    showingDeleteConfirm = true
+                Section {
+                    Button("Offload") { onOffload() }
+                        .disabled(isBusy)
                 }
-                .disabled(isBusy)
+                Section {
+                    Button("Delete Model", role: .destructive) {
+                        showingDeleteConfirm = true
+                    }
+                    .disabled(isBusy)
+                }
             } else {
                 Button("Get Model") { onGet() }
                     .disabled(isBusy)

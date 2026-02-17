@@ -11,6 +11,8 @@ enum LlamaError: Error {
     case batchOverflow
     case ocrBridgeUnavailable
     case ocrVisionUnavailable
+    case modelFileMissing
+    case invalidModelFile
 }
 
 actor LlamaContext {
@@ -62,6 +64,13 @@ actor LlamaContext {
     // MARK: - Model Loading
     
     func loadModel(path: String, lowMemory: Bool = false) throws {
+        guard FileManager.default.fileExists(atPath: path) else {
+            throw LlamaError.modelFileMissing
+        }
+        guard isGGUFFile(path: path) else {
+            throw LlamaError.invalidModelFile
+        }
+
         // Cleanup existing
         if let context = context { llama_free(context); self.context = nil }
         if let model = model { llama_model_free(model); self.model = nil }
@@ -109,6 +118,13 @@ actor LlamaContext {
     }
     
     func loadEmbeddingModel(path: String, lowMemory: Bool = false) throws {
+        guard FileManager.default.fileExists(atPath: path) else {
+            throw LlamaError.modelFileMissing
+        }
+        guard isGGUFFile(path: path) else {
+            throw LlamaError.invalidModelFile
+        }
+
         if let contextEmbed = contextEmbed { llama_free(contextEmbed); self.contextEmbed = nil }
         if let modelEmbed = modelEmbed { llama_model_free(modelEmbed); self.modelEmbed = nil }
         
@@ -173,6 +189,13 @@ actor LlamaContext {
     }
 
     func loadOCRModel(path: String, auxiliaryPath: String? = nil, lowMemory: Bool = false) throws {
+        guard FileManager.default.fileExists(atPath: path) else {
+            throw LlamaError.modelFileMissing
+        }
+        guard isGGUFFile(path: path) else {
+            throw LlamaError.invalidModelFile
+        }
+
         if let visionOCRContext = visionOCRContext { mtmd_free(visionOCRContext); self.visionOCRContext = nil }
         if let contextOCR = contextOCR { llama_free(contextOCR); self.contextOCR = nil }
         if let modelOCR = modelOCR { llama_model_free(modelOCR); self.modelOCR = nil }
@@ -202,6 +225,14 @@ actor LlamaContext {
         }
 
         initializeVisionOCRContext(model: modelOCR, modelPath: path, auxiliaryPath: auxiliaryPath, lowMemory: lowMemory)
+    }
+
+    private func isGGUFFile(path: String) -> Bool {
+        guard let handle = FileHandle(forReadingAtPath: path) else { return false }
+        defer { try? handle.close() }
+        guard let data = try? handle.read(upToCount: 4), let data, data.count == 4 else { return false }
+        let expected = Data([0x47, 0x47, 0x55, 0x46]) // "GGUF"
+        return data == expected
     }
 
     func unloadOCRModel() {
@@ -829,5 +860,32 @@ actor LlamaContext {
         }
         formatted += "<|im_start|>assistant\n"
         return formatted
+    }
+}
+
+extension LlamaError: LocalizedError {
+    var errorDescription: String? {
+        switch self {
+        case .failedToLoadModel:
+            return "Failed to load model. The file may be incomplete, incompatible, or corrupted."
+        case .failedToInitContext:
+            return "Failed to initialize llama context. Try Low Power Mode or a smaller model."
+        case .decodeFailed:
+            return "Model decode failed."
+        case .noEmbeddings:
+            return "No embeddings returned by model."
+        case .notLoaded:
+            return "Model is not loaded."
+        case .batchOverflow:
+            return "Token batch overflow."
+        case .ocrBridgeUnavailable:
+            return "OCR bridge is unavailable."
+        case .ocrVisionUnavailable:
+            return "Vision/OCR projector is unavailable for this model."
+        case .modelFileMissing:
+            return "Model file not found on disk."
+        case .invalidModelFile:
+            return "Invalid model file format. Expected a GGUF file."
+        }
     }
 }
