@@ -270,7 +270,7 @@ actor LlamaContext {
         }
 
         let marker = visionOCRMarker
-        let prompt = "\(marker)\nExtract all readable text from this document image. Return plain text only."
+        let prompt = "\(marker)\nTranscribe only text that is clearly visible in this image. Do not infer or add missing words. Return plain text only."
         let promptC = strdup(prompt)
         guard let promptC else { throw LlamaError.decodeFailed }
         defer { free(promptC) }
@@ -320,8 +320,8 @@ actor LlamaContext {
             context: contextOCR,
             model: modelOCR,
             startPos: Int32(newNPast),
-            maxTokens: 768,
-            temperature: 0.1,
+            maxTokens: 512,
+            temperature: 0.0,
             stopSequences: ["<|im_end|>", "<|endoftext|>", "</s>", "<|user|>", "<|assistant|>"]
         )
     }
@@ -335,7 +335,10 @@ actor LlamaContext {
 
         let prompt = """
         You are an OCR cleanup assistant.
-        Fix OCR mistakes in the provided text, preserve meaning and formatting, and return only corrected text.
+        Correct obvious OCR character mistakes only.
+        Do not add new content and do not invent missing words.
+        Preserve line breaks and formatting.
+        Return only corrected text.
 
         OCR INPUT:
         \(trimmed)
@@ -346,8 +349,8 @@ actor LlamaContext {
             prompt: prompt,
             context: contextOCR,
             model: modelOCR,
-            maxTokens: 512,
-            temperature: 0.2
+            maxTokens: 384,
+            temperature: 0.0
         )
     }
 
@@ -414,15 +417,16 @@ actor LlamaContext {
                     let sampler = llama_sampler_chain_init(sparams)
                     defer { llama_sampler_free(sampler) }
                     
-                    llama_sampler_chain_add(sampler, llama_sampler_init_top_k(40))
-                    llama_sampler_chain_add(sampler, llama_sampler_init_top_p(0.9, 1))
-                    llama_sampler_chain_add(sampler, llama_sampler_init_temp(0.7))
+                    // More conservative chat decoding to reduce hallucinations.
+                    llama_sampler_chain_add(sampler, llama_sampler_init_top_k(30))
+                    llama_sampler_chain_add(sampler, llama_sampler_init_top_p(0.8, 1))
+                    llama_sampler_chain_add(sampler, llama_sampler_init_temp(0.25))
                     llama_sampler_chain_add(sampler, llama_sampler_init_dist(LLAMA_DEFAULT_SEED))
                     
                     // Generation Loop
                     var n_cur = Int32(n_tokens)
                     var n_decode = 0
-                    let max_tokens = 2048
+                    let max_tokens = 768
                     
                     // Stop sequences (matching Android)
                     let stopSequences = [
@@ -679,14 +683,20 @@ actor LlamaContext {
             }
         }
 
-        var sparams = llama_sampler_chain_default_params()
-        let sampler = llama_sampler_chain_init(sparams)
+        let sampler: OpaquePointer?
+        if temperature <= 0.0001 {
+            sampler = llama_sampler_init_greedy()
+        } else {
+            var sparams = llama_sampler_chain_default_params()
+            let chain = llama_sampler_chain_init(sparams)
+            llama_sampler_chain_add(chain, llama_sampler_init_top_k(40))
+            llama_sampler_chain_add(chain, llama_sampler_init_top_p(0.9, 1))
+            llama_sampler_chain_add(chain, llama_sampler_init_temp(temperature))
+            llama_sampler_chain_add(chain, llama_sampler_init_dist(LLAMA_DEFAULT_SEED))
+            sampler = chain
+        }
+        guard let sampler else { throw LlamaError.decodeFailed }
         defer { llama_sampler_free(sampler) }
-
-        llama_sampler_chain_add(sampler, llama_sampler_init_top_k(40))
-        llama_sampler_chain_add(sampler, llama_sampler_init_top_p(0.9, 1))
-        llama_sampler_chain_add(sampler, llama_sampler_init_temp(temperature))
-        llama_sampler_chain_add(sampler, llama_sampler_init_dist(LLAMA_DEFAULT_SEED))
 
         let n_ctx = Int32(llama_n_ctx(context))
         var nCur = Int32(tokens.count)
@@ -725,14 +735,20 @@ actor LlamaContext {
         temperature: Float,
         stopSequences: [String]
     ) throws -> String {
-        var sparams = llama_sampler_chain_default_params()
-        let sampler = llama_sampler_chain_init(sparams)
+        let sampler: OpaquePointer?
+        if temperature <= 0.0001 {
+            sampler = llama_sampler_init_greedy()
+        } else {
+            var sparams = llama_sampler_chain_default_params()
+            let chain = llama_sampler_chain_init(sparams)
+            llama_sampler_chain_add(chain, llama_sampler_init_top_k(40))
+            llama_sampler_chain_add(chain, llama_sampler_init_top_p(0.9, 1))
+            llama_sampler_chain_add(chain, llama_sampler_init_temp(temperature))
+            llama_sampler_chain_add(chain, llama_sampler_init_dist(LLAMA_DEFAULT_SEED))
+            sampler = chain
+        }
+        guard let sampler else { throw LlamaError.decodeFailed }
         defer { llama_sampler_free(sampler) }
-
-        llama_sampler_chain_add(sampler, llama_sampler_init_top_k(40))
-        llama_sampler_chain_add(sampler, llama_sampler_init_top_p(0.9, 1))
-        llama_sampler_chain_add(sampler, llama_sampler_init_temp(temperature))
-        llama_sampler_chain_add(sampler, llama_sampler_init_dist(LLAMA_DEFAULT_SEED))
 
         let nCtx = Int32(llama_n_ctx(context))
         var nCur = startPos

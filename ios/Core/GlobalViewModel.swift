@@ -804,7 +804,12 @@ class GlobalViewModel {
 
     private func buildMessageHistory(ragNotes: [Note] = [], ragChunks: [KnowledgeChunk] = []) -> [[String: String]] {
         var messages: [[String: String]] = []
-        var systemContent = "You are a helpful assistant."
+        var systemContent = """
+        You are a helpful assistant.
+        Give concise, direct answers.
+        Do not output chain-of-thought or reasoning tags such as <think>...</think>.
+        If context is insufficient, say you are not sure instead of guessing.
+        """
         let contextBlock = ragContextBlock(notes: ragNotes, chunks: ragChunks)
 
         if !contextBlock.isEmpty {
