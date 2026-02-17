@@ -100,7 +100,14 @@ final class DocumentTextExtractionService {
         llamaContext: LlamaContext?,
         preferOCRModel: Bool
     ) async throws -> DocumentExtractionResult {
+        let canUseModelVisionOCR: Bool
         if preferOCRModel, let llamaContext {
+            canUseModelVisionOCR = await llamaContext.hasVisionOCRContext()
+        } else {
+            canUseModelVisionOCR = false
+        }
+
+        if canUseModelVisionOCR, let llamaContext {
             do {
                 let modelText = try await llamaContext.extractTextFromImageData(imageData)
                 let trimmed = modelText.trimmingCharacters(in: .whitespacesAndNewlines)

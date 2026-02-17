@@ -1042,7 +1042,10 @@ class GlobalViewModel {
                     throw error
                 }
             }
-            if !(await llamaContext.hasVisionOCRContext()) {
+            let hasVisionContext = await llamaContext.hasVisionOCRContext()
+            // OCR models can still be useful for cleanup even without a vision projector.
+            // Only VL entries require a working vision context.
+            if item.kind == .vl && !hasVisionContext {
                 throw LlamaError.ocrVisionUnavailable
             }
             isOCRModelLoaded = true
