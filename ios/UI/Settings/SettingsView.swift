@@ -228,6 +228,11 @@ struct SettingsView: View {
                     Text("Forces CPU usage and reduces context size (2048). Recommended for resource-constrained environments.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
+
+                    Toggle("Long Answer Mode", isOn: Bindable(vm).isLongAnswerMode)
+                    Text("Increases chat response cap from 768 to 1536 tokens. May be slower and more verbose.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
 
                 Section("RAG") {

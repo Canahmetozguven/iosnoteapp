@@ -20,6 +20,7 @@ class GlobalViewModel {
         static let activeEmbeddingModelId = "active_embedding_model_id"
         static let activeOCRModelId = "active_ocr_model_id"
         static let useModelOCRForImports = "use_model_ocr_for_imports"
+        static let longAnswerMode = "long_answer_mode"
         static let lowPowerMode = "low_power_mode"
         static let activeChatSessionId = "active_chat_session_id"
     }
@@ -99,6 +100,12 @@ class GlobalViewModel {
         }
     }
 
+    var isLongAnswerMode: Bool = false {
+        didSet {
+            defaults.set(isLongAnswerMode, forKey: PreferenceKey.longAnswerMode)
+        }
+    }
+
     // Progress for indexing (0.0 to 1.0)
     var indexingProgress: Double = 0.0
     var indexingStatus: String? = nil
@@ -129,6 +136,12 @@ class GlobalViewModel {
         } else {
             useModelOCRForImports = false
             defaults.set(false, forKey: PreferenceKey.useModelOCRForImports)
+        }
+        if defaults.object(forKey: PreferenceKey.longAnswerMode) != nil {
+            isLongAnswerMode = defaults.bool(forKey: PreferenceKey.longAnswerMode)
+        } else {
+            isLongAnswerMode = false
+            defaults.set(false, forKey: PreferenceKey.longAnswerMode)
         }
         if let rawSessionId = defaults.string(forKey: PreferenceKey.activeChatSessionId) {
             activeSessionId = UUID(uuidString: rawSessionId)
@@ -503,7 +516,8 @@ class GlobalViewModel {
             var fullResponse = ""
 
             do {
-                let stream = await llamaContext.completion(prompt: prompt)
+                let maxTokens = isLongAnswerMode ? 1536 : 768
+                let stream = await llamaContext.completion(prompt: prompt, maxTokens: maxTokens)
                 for try await token in stream {
                     if Task.isCancelled { break }
                     fullResponse += token

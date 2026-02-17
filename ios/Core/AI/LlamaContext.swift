@@ -364,7 +364,7 @@ actor LlamaContext {
         self.stopRequested = true
     }
     
-    func completion(prompt: String) -> AsyncThrowingStream<String, Error> {
+    func completion(prompt: String, maxTokens: Int = 768) -> AsyncThrowingStream<String, Error> {
         return AsyncThrowingStream { continuation in
             Task {
                 do {
@@ -426,7 +426,7 @@ actor LlamaContext {
                     // Generation Loop
                     var n_cur = Int32(n_tokens)
                     var n_decode = 0
-                    let max_tokens = 768
+                    let max_tokens = max(128, min(maxTokens, Int(n_ctx) - 1))
                     
                     // Stop sequences (matching Android)
                     let stopSequences = [
