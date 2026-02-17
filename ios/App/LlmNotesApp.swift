@@ -10,26 +10,7 @@ struct LlmNotesApp: App {
     @State private var globalViewModel = GlobalViewModel()
     @UIApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
 
-    var sharedModelContainer: ModelContainer = {
-        let schema = Schema([
-            SchemaV3.Note.self,
-            SchemaV3.ChatSession.self,
-            SchemaV3.ChatMessage.self,
-            SchemaV3.KnowledgeDocument.self,
-            SchemaV3.KnowledgeChunk.self
-        ])
-        let modelConfiguration = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
-
-        do {
-            return try ModelContainer(
-                for: schema,
-                migrationPlan: AppSchemaMigrationPlan.self,
-                configurations: [modelConfiguration]
-            )
-        } catch {
-            fatalError("Could not create ModelContainer: \(error)")
-        }
-    }()
+    var sharedModelContainer: ModelContainer = Self.makeModelContainer()
 
     var body: some Scene {
         WindowGroup {
@@ -52,5 +33,44 @@ struct LlmNotesApp: App {
                 }
         }
         .modelContainer(sharedModelContainer)
+    }
+
+    private static func makeSchema() -> Schema {
+        Schema([
+            SchemaV3.Note.self,
+            SchemaV3.ChatSession.self,
+            SchemaV3.ChatMessage.self,
+            SchemaV3.KnowledgeDocument.self,
+            SchemaV3.KnowledgeChunk.self
+        ])
+    }
+
+    private static func makeModelContainer() -> ModelContainer {
+        let schema = makeSchema()
+        let persistentConfig = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false)
+
+        do {
+            return try ModelContainer(
+                for: schema,
+                migrationPlan: AppSchemaMigrationPlan.self,
+                configurations: [persistentConfig]
+            )
+        } catch {
+            // Do not hard-crash in production if migration metadata is inconsistent.
+            print("SwiftData: migration plan container init failed: \(error)")
+        }
+
+        do {
+            return try ModelContainer(for: schema, configurations: [persistentConfig])
+        } catch {
+            print("SwiftData: direct persistent container init failed: \(error)")
+        }
+
+        do {
+            let inMemoryConfig = ModelConfiguration(schema: schema, isStoredInMemoryOnly: true)
+            return try ModelContainer(for: schema, configurations: [inMemoryConfig])
+        } catch {
+            fatalError("Could not create any ModelContainer: \(error)")
+        }
     }
 }

@@ -19,6 +19,7 @@ class GlobalViewModel {
         static let activeChatModelId = "active_chat_model_id"
         static let activeEmbeddingModelId = "active_embedding_model_id"
         static let activeOCRModelId = "active_ocr_model_id"
+        static let useModelOCRForImports = "use_model_ocr_for_imports"
         static let lowPowerMode = "low_power_mode"
         static let activeChatSessionId = "active_chat_session_id"
     }
@@ -86,6 +87,14 @@ class GlobalViewModel {
         }
     }
 
+    // Default OCR backend for imports is Apple Vision.
+    // Local OCR/VL model is opt-in via Settings.
+    var useModelOCRForImports: Bool = false {
+        didSet {
+            defaults.set(useModelOCRForImports, forKey: PreferenceKey.useModelOCRForImports)
+        }
+    }
+
     // Progress for indexing (0.0 to 1.0)
     var indexingProgress: Double = 0.0
     var indexingStatus: String? = nil
@@ -111,6 +120,12 @@ class GlobalViewModel {
         currentChatModelId = defaults.string(forKey: PreferenceKey.activeChatModelId)
         currentEmbeddingModelId = defaults.string(forKey: PreferenceKey.activeEmbeddingModelId)
         currentOCRModelId = defaults.string(forKey: PreferenceKey.activeOCRModelId)
+        if defaults.object(forKey: PreferenceKey.useModelOCRForImports) != nil {
+            useModelOCRForImports = defaults.bool(forKey: PreferenceKey.useModelOCRForImports)
+        } else {
+            useModelOCRForImports = false
+            defaults.set(false, forKey: PreferenceKey.useModelOCRForImports)
+        }
         if let rawSessionId = defaults.string(forKey: PreferenceKey.activeChatSessionId) {
             activeSessionId = UUID(uuidString: rawSessionId)
         }
@@ -987,6 +1002,9 @@ class GlobalViewModel {
             let auxiliaryURL = ((try? ModelStorage.shared.auxiliaryFileURL(for: item)) ?? nil)
             let auxiliaryPath = auxiliaryURL?.path
             try await llamaContext.loadOCRModel(path: path, auxiliaryPath: auxiliaryPath, lowMemory: isLowPowerMode)
+            if !(await llamaContext.hasVisionOCRContext()) {
+                throw LlamaError.ocrVisionUnavailable
+            }
             isOCRModelLoaded = true
             currentOCRModelId = item.id
             touchOCRUsage()
@@ -1281,7 +1299,7 @@ extension GlobalViewModel {
         Task { @MainActor in
             var success = 0
             var failed = 0
-            let ocrSession = await prepareOCRModelForTask()
+            let ocrSession = useModelOCRForImports ? await prepareOCRModelForTask() : (enabled: false, loadedTemporarily: false)
 
             for url in urls {
                 let didAccess = url.startAccessingSecurityScopedResource()
@@ -1302,7 +1320,9 @@ extension GlobalViewModel {
                 }
             }
 
-            await finishOCRModelTask(loadedTemporarily: ocrSession.loadedTemporarily)
+            if useModelOCRForImports {
+                await finishOCRModelTask(loadedTemporarily: ocrSession.loadedTemporarily)
+            }
             isImportingKnowledge = false
             knowledgeImportStatus = "Knowledge import: \(success) succeeded, \(failed) failed"
             Task { @MainActor in
@@ -1323,7 +1343,7 @@ extension GlobalViewModel {
 
         Task { @MainActor in
             defer { isImportingKnowledge = false }
-            let ocrSession = await prepareOCRModelForTask()
+            let ocrSession = useModelOCRForImports ? await prepareOCRModelForTask() : (enabled: false, loadedTemporarily: false)
             do {
                 let ingested = try await knowledgeIngestionService.ingestImageData(
                     data,
@@ -1336,7 +1356,9 @@ extension GlobalViewModel {
             } catch {
                 knowledgeImportStatus = "Image import failed: \(error.localizedDescription)"
             }
-            await finishOCRModelTask(loadedTemporarily: ocrSession.loadedTemporarily)
+            if useModelOCRForImports {
+                await finishOCRModelTask(loadedTemporarily: ocrSession.loadedTemporarily)
+            }
             Task { @MainActor in
                 try? await Task.sleep(for: .seconds(3))
                 if !isImportingKnowledge {
@@ -1355,7 +1377,7 @@ extension GlobalViewModel {
 
         Task { @MainActor in
             defer { isImportingKnowledge = false }
-            let ocrSession = await prepareOCRModelForTask()
+            let ocrSession = useModelOCRForImports ? await prepareOCRModelForTask() : (enabled: false, loadedTemporarily: false)
             let ext = URL(fileURLWithPath: file.name ?? "drive-file").pathExtension.lowercased()
             let suffix = resolvedDriveTempExtension(fileNameExtension: ext, mimeType: file.mimeType)
             let tempURL = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID().uuidString).\(suffix)", isDirectory: false)
@@ -1373,7 +1395,9 @@ extension GlobalViewModel {
             } catch {
                 knowledgeImportStatus = "Drive import failed: \(error.localizedDescription)"
             }
-            await finishOCRModelTask(loadedTemporarily: ocrSession.loadedTemporarily)
+            if useModelOCRForImports {
+                await finishOCRModelTask(loadedTemporarily: ocrSession.loadedTemporarily)
+            }
             try? FileManager.default.removeItem(at: tempURL)
             Task { @MainActor in
                 try? await Task.sleep(for: .seconds(3))

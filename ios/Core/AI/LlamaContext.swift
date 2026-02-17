@@ -224,6 +224,10 @@ actor LlamaContext {
         contextOCR != nil && modelOCR != nil
     }
 
+    func hasVisionOCRContext() -> Bool {
+        visionOCRContext != nil
+    }
+
     func extractTextFromImageData(_ imageData: Data) async throws -> String {
         guard !imageData.isEmpty else { return "" }
         guard let contextOCR = self.contextOCR, let modelOCR = self.modelOCR else {

@@ -5,6 +5,7 @@ import UIKit
 struct DocumentExtractionResult {
     var text: String
     var engine: String
+    var pages: [String]? = nil
 }
 
 final class DocumentTextExtractionService {
@@ -90,7 +91,7 @@ final class DocumentTextExtractionService {
             engine = "pdf_text"
         }
 
-        return DocumentExtractionResult(text: text, engine: engine)
+        return DocumentExtractionResult(text: text, engine: engine, pages: sections)
     }
 
     private func extractFromImage(

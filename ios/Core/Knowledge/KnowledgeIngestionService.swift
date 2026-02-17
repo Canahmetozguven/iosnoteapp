@@ -31,7 +31,12 @@ final class KnowledgeIngestionService {
             llamaContext: llamaContext,
             preferOCRModel: preferOCRModel
         )
-        let chunks = chunking.chunk(text: extraction.text, chunkSize: 800, overlap: 120)
+        let chunks: [String]
+        if let pages = extraction.pages, !pages.isEmpty {
+            chunks = chunking.chunkPages(pages, chunkSize: 800, overlap: 120)
+        } else {
+            chunks = chunking.chunk(text: extraction.text, chunkSize: 800, overlap: 120)
+        }
         let hash = sha256(extraction.text)
 
         return IngestedKnowledgeDocument(
@@ -59,7 +64,12 @@ final class KnowledgeIngestionService {
             llamaContext: llamaContext,
             preferOCRModel: preferOCRModel
         )
-        let chunks = chunking.chunk(text: extraction.text, chunkSize: 800, overlap: 120)
+        let chunks: [String]
+        if let pages = extraction.pages, !pages.isEmpty {
+            chunks = chunking.chunkPages(pages, chunkSize: 800, overlap: 120)
+        } else {
+            chunks = chunking.chunk(text: extraction.text, chunkSize: 800, overlap: 120)
+        }
         let hash = sha256(extraction.text)
 
         return IngestedKnowledgeDocument(

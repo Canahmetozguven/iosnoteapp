@@ -98,6 +98,12 @@ struct SettingsView: View {
                             .foregroundStyle(.secondary)
                     }
                     HStack {
+                        Text("OCR Backend")
+                        Spacer()
+                        Text(vm.useModelOCRForImports ? "Vision Model" : "Apple Vision")
+                            .foregroundStyle(.secondary)
+                    }
+                    HStack {
                         Text("Chats")
                         Spacer()
                         Text("\(vm.sessions.count)")
@@ -157,6 +163,8 @@ struct SettingsView: View {
                 }
 
                 Section("Vision Models (OCR/VL)") {
+                    Toggle("Use Vision Model For OCR Imports", isOn: Bindable(vm).useModelOCRForImports)
+
                     let items = (vm.catalogStore.items(kind: .ocr) + vm.catalogStore.items(kind: .vl))
                         .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
                     if items.isEmpty {
@@ -179,7 +187,11 @@ struct SettingsView: View {
                         }
                     }
 
-                    Text("Vision models are loaded only when needed for document import and auto-offloaded after use.")
+                    Text("Default OCR uses Apple Vision. Enable the toggle above to use the selected local OCR/VL model for imports.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
+                    Text("When enabled, vision models load only during import and auto-offload after use.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
