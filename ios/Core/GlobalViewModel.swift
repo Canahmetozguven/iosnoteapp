@@ -933,6 +933,7 @@ class GlobalViewModel {
 
     private func modelPathIfInstalled(_ item: ModelCatalogItem) -> String? {
         do {
+            guard ModelStorage.shared.exists(item) else { return nil }
             let url = try ModelStorage.shared.fileURL(for: item)
             return FileManager.default.fileExists(atPath: url.path) ? url.path : nil
         } catch {
@@ -1365,6 +1366,17 @@ extension GlobalViewModel {
             var success = 0
             var failed = 0
             let ocrSession = useModelOCRForImports ? await prepareOCRModelForTask() : (enabled: false, loadedTemporarily: false)
+            if useModelOCRForImports && !ocrSession.enabled {
+                isImportingKnowledge = false
+                knowledgeImportStatus = "Model OCR is enabled, but the selected OCR/VL model is not ready. Download a compatible model and its mmproj, then load it."
+                Task { @MainActor in
+                    try? await Task.sleep(for: .seconds(4))
+                    if !isImportingKnowledge {
+                        knowledgeImportStatus = nil
+                    }
+                }
+                return
+            }
 
             for url in urls {
                 let didAccess = url.startAccessingSecurityScopedResource()
@@ -1409,6 +1421,10 @@ extension GlobalViewModel {
         Task { @MainActor in
             defer { isImportingKnowledge = false }
             let ocrSession = useModelOCRForImports ? await prepareOCRModelForTask() : (enabled: false, loadedTemporarily: false)
+            guard !useModelOCRForImports || ocrSession.enabled else {
+                knowledgeImportStatus = "Model OCR is enabled, but the selected OCR/VL model is not ready. Download a compatible model and its mmproj, then load it."
+                return
+            }
             do {
                 let ingested = try await knowledgeIngestionService.ingestImageData(
                     data,
@@ -1443,6 +1459,10 @@ extension GlobalViewModel {
         Task { @MainActor in
             defer { isImportingKnowledge = false }
             let ocrSession = useModelOCRForImports ? await prepareOCRModelForTask() : (enabled: false, loadedTemporarily: false)
+            guard !useModelOCRForImports || ocrSession.enabled else {
+                knowledgeImportStatus = "Model OCR is enabled, but the selected OCR/VL model is not ready. Download a compatible model and its mmproj, then load it."
+                return
+            }
             let ext = URL(fileURLWithPath: file.name ?? "drive-file").pathExtension.lowercased()
             let suffix = resolvedDriveTempExtension(fileNameExtension: ext, mimeType: file.mimeType)
             let tempURL = FileManager.default.temporaryDirectory.appendingPathComponent("\(UUID().uuidString).\(suffix)", isDirectory: false)
