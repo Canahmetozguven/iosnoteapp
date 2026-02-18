@@ -43,7 +43,7 @@ struct OnboardingView: View {
             detail: "Import PDFs, images, and text into Knowledge Base. OCR extracts content and Chat retrieves relevant chunks.",
             points: [
                 "Import from Files, Photos, or connected Google Drive.",
-                "OCR model is used first when loaded; Vision OCR is fallback.",
+                "Apple Vision OCR is currently used for all imports.",
                 "Chat uses both Notes and Knowledge Base chunks as context."
             ],
             symbol: "books.vertical.fill",

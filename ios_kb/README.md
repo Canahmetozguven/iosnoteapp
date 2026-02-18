@@ -35,3 +35,8 @@ The Android app is:
 ## Porting Principle
 Port behavior first, then optimize platform-specific UX.  
 Critical rule: keep inference, embedding, and persistence semantics identical unless explicitly changed.
+
+## Temporary OCR Decision
+- Current iOS behavior: OCR imports use Apple Vision OCR only.
+- Local OCR/VL model import path is temporarily deprecated pending runtime compatibility hardening.
+- Re-enabling selectable local OCR/VL import models remains a planned feature.

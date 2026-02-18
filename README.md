@@ -11,6 +11,11 @@ Native iOS app (SwiftUI + SwiftData) with local LLM inference via `llama.cpp`.
 - Bundle ID: `com.synapsnotes.ios`
 - Xcode project is generated via `xcodegen` from `ios/project.yml`
 
+## OCR Status
+- Current behavior: Knowledge import OCR uses Apple Vision OCR only.
+- Temporary deprecation: Local OCR/VL model inference for imports is disabled.
+- Planned feature: Re-enable selectable local OCR/VL models after compatibility hardening.
+
 ## App Icon
 Apple requires the 1024x1024 App Store icon to be **opaque** (no alpha channel).
 

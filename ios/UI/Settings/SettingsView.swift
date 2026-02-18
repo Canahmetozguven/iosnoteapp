@@ -100,7 +100,7 @@ struct SettingsView: View {
                     HStack {
                         Text("OCR Backend")
                         Spacer()
-                        Text(vm.useModelOCRForImports ? "Vision Model" : "Apple Vision")
+                        Text("Apple Vision (Temporary)")
                             .foregroundStyle(.secondary)
                     }
                     HStack {
@@ -167,7 +167,8 @@ struct SettingsView: View {
                 }
 
                 Section("Vision Models (OCR/VL)") {
-                    Toggle("Use Vision Model For OCR Imports", isOn: Bindable(vm).useModelOCRForImports)
+                    Toggle("Use Vision Model For OCR Imports (Deprecated)", isOn: .constant(false))
+                        .disabled(true)
 
                     let items = (vm.catalogStore.items(kind: .ocr) + vm.catalogStore.items(kind: .vl))
                         .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
@@ -182,7 +183,7 @@ struct SettingsView: View {
                                 isInstalled: vm.isInstalled(item),
                                 downloadState: vm.downloads.state(for: item.id),
                                 isBusy: vm.isBusy,
-                                isEnabled: vm.useModelOCRForImports,
+                                isEnabled: true,
                                 onGet: { vm.startDownload(item) },
                                 onCancel: { vm.cancelDownload(modelId: item.id) },
                                 onLoad: { vm.loadOCRModel(item: item) },
@@ -193,17 +194,11 @@ struct SettingsView: View {
                         }
                     }
 
-                    Text("Default OCR uses Apple Vision. Enable the toggle above to use the selected local OCR/VL model for imports.")
+                    Text("Apple Vision OCR is active for all imports. Local OCR/VL model inference is temporarily deprecated.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
 
-                    if !vm.useModelOCRForImports {
-                        Text("Vision model actions are locked while Apple Vision OCR is active.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-
-                    Text("When enabled, vision models load only during import and auto-offload after use.")
+                    Text("Vision models remain downloadable as a planned feature for a future release.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }

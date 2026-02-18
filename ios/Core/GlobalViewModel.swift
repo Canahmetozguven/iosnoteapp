@@ -92,11 +92,15 @@ class GlobalViewModel {
         }
     }
 
-    // Default OCR backend for imports is Apple Vision.
-    // Local OCR/VL model is opt-in via Settings.
+    // Local OCR/VL import path is temporarily deprecated.
+    // Apple Vision OCR is always used for imports for now.
     var useModelOCRForImports: Bool = false {
         didSet {
-            defaults.set(useModelOCRForImports, forKey: PreferenceKey.useModelOCRForImports)
+            if useModelOCRForImports {
+                useModelOCRForImports = false
+                return
+            }
+            defaults.set(false, forKey: PreferenceKey.useModelOCRForImports)
         }
     }
 
@@ -131,12 +135,8 @@ class GlobalViewModel {
         currentChatModelId = defaults.string(forKey: PreferenceKey.activeChatModelId)
         currentEmbeddingModelId = defaults.string(forKey: PreferenceKey.activeEmbeddingModelId)
         currentOCRModelId = defaults.string(forKey: PreferenceKey.activeOCRModelId)
-        if defaults.object(forKey: PreferenceKey.useModelOCRForImports) != nil {
-            useModelOCRForImports = defaults.bool(forKey: PreferenceKey.useModelOCRForImports)
-        } else {
-            useModelOCRForImports = false
-            defaults.set(false, forKey: PreferenceKey.useModelOCRForImports)
-        }
+        useModelOCRForImports = false
+        defaults.set(false, forKey: PreferenceKey.useModelOCRForImports)
         if defaults.object(forKey: PreferenceKey.longAnswerMode) != nil {
             isLongAnswerMode = defaults.bool(forKey: PreferenceKey.longAnswerMode)
         } else {
