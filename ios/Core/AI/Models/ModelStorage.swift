@@ -40,9 +40,9 @@ final class ModelStorage {
     func exists(_ item: ModelCatalogItem) -> Bool {
         do {
             let url = try fileURL(for: item)
-            guard FileManager.default.fileExists(atPath: url.path) else { return false }
+            guard isValidModelFile(url: url, filename: item.filename) else { return false }
             if let auxURL = try auxiliaryFileURL(for: item) {
-                return FileManager.default.fileExists(atPath: auxURL.path)
+                return isValidModelFile(url: auxURL, filename: item.auxiliaryFilename ?? "")
             }
             return true
         } catch {
@@ -92,5 +92,20 @@ final class ModelStorage {
             throw ModelStorageError.failedToCreateDirectory
         }
         excludeFromBackup(url)
+    }
+
+    private func isValidModelFile(url: URL, filename: String) -> Bool {
+        guard FileManager.default.fileExists(atPath: url.path) else { return false }
+        if filename.lowercased().hasSuffix(".gguf") {
+            return isGGUFFile(url: url)
+        }
+        return true
+    }
+
+    private func isGGUFFile(url: URL) -> Bool {
+        guard let handle = try? FileHandle(forReadingFrom: url) else { return false }
+        defer { try? handle.close() }
+        guard let data = try? handle.read(upToCount: 4), data.count == 4 else { return false }
+        return data == Data([0x47, 0x47, 0x55, 0x46]) // "GGUF"
     }
 }

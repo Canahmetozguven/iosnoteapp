@@ -1022,7 +1022,11 @@ class GlobalViewModel {
     private func loadOCRModelAsync(item: ModelCatalogItem, persistSelection: Bool) async {
         guard item.kind == .ocr || item.kind == .vl else { return }
         guard let path = modelPathIfInstalled(item) else {
-            modelError = "Model file not found"
+            if let aux = item.auxiliaryFilename, !aux.isEmpty {
+                modelError = "Required files are missing or invalid. Re-download both: \(item.filename) and \(aux)."
+            } else {
+                modelError = "Model file not found"
+            }
             return
         }
         guard !isOCRModelLoading else { return }

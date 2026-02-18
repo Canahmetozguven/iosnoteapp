@@ -215,7 +215,11 @@ final class ModelDownloadManager: NSObject {
         do {
             let dir = try storage.modelsDirectory(for: kind)
             let url = dir.appendingPathComponent(filename, isDirectory: false)
-            return FileManager.default.fileExists(atPath: url.path)
+            guard FileManager.default.fileExists(atPath: url.path) else { return false }
+            if filename.lowercased().hasSuffix(".gguf") {
+                return isGGUFFile(fileURL: url)
+            }
+            return true
         } catch {
             return false
         }
