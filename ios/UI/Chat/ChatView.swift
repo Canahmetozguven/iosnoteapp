@@ -6,22 +6,34 @@ struct ChatView: View {
     @Environment(\.modelContext) private var modelContext
     @Query private var notes: [Note]
     @Query private var knowledgeChunks: [KnowledgeChunk]
+    @AppStorage(OnboardingState.selectedTabKey) private var selectedTabRaw = 1
 
     @State private var inputText = ""
     @State private var showingSessionSheet = false
+    @State private var strictForNextMessage = false
+    @State private var whyMessageId: UUID?
+    @State private var selectedSourcePreview: SourcePreview?
     @FocusState private var isInputFocused: Bool
 
     var body: some View {
         VStack(spacing: 0) {
             if let ragStatusText = vm.ragStatusText() {
-                VStack(alignment: .leading, spacing: 3) {
+                VStack(alignment: .leading, spacing: 6) {
                     Text(ragStatusText)
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                    if let stage = vm.generationStage {
+                        Text(stage.displayText)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
                     if let debugLine = vm.ragDebugText() {
                         Text(debugLine)
                             .font(.caption2)
                             .foregroundStyle(.tertiary)
+                    }
+                    if isNoContextState {
+                        noContextActions
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -72,16 +84,69 @@ struct ChatView: View {
             ChatSessionsSheet(vm: vm, modelContext: modelContext)
                 .presentationDetents([.medium, .large])
         }
+        .sheet(item: $selectedSourcePreview) { preview in
+            SourcePreviewSheet(preview: preview)
+        }
+        .sheet(isPresented: whySheetPresented) {
+            if let message = assistantMessage(by: whyMessageId) {
+                WhyAnswerSheet(
+                    message: message,
+                    insight: vm.insight(for: message.id),
+                    sourcePreviews: sourcePreviews(for: message)
+                )
+            }
+        }
         .onAppear {
+            strictForNextMessage = vm.strictGroundingMode
             vm.bootstrapIfNeeded(modelContext: modelContext)
             vm.startAutoIndexIfNeeded(notes: notes, modelContext: modelContext)
             vm.startAutoIndexKnowledgeIfNeeded(chunks: knowledgeChunks, modelContext: modelContext)
+        }
+        .onChange(of: vm.strictGroundingMode) { _, newValue in
+            strictForNextMessage = newValue
         }
         .onChange(of: vm.isEmbeddingModelLoaded) {
             if vm.isEmbeddingModelLoaded {
                 vm.startAutoIndexIfNeeded(notes: notes, modelContext: modelContext)
                 vm.startAutoIndexKnowledgeIfNeeded(chunks: knowledgeChunks, modelContext: modelContext)
             }
+        }
+    }
+
+    private var whySheetPresented: Binding<Bool> {
+        Binding(
+            get: { whyMessageId != nil },
+            set: { if !$0 { whyMessageId = nil } }
+        )
+    }
+
+    private var isNoContextState: Bool {
+        if case .usedContext(let count) = vm.ragStatus, count == 0 {
+            return true
+        }
+        return false
+    }
+
+    private var noContextActions: some View {
+        HStack(spacing: 8) {
+            Button("Upload file") {
+                selectedTabRaw = 2
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+
+            Button("Ask narrower") {
+                inputText = "Using my notes/documents only: "
+                isInputFocused = true
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+
+            Button("Switch to Deep Search") {
+                vm.ragRetrievalProfile = .deepSearch
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
         }
     }
 
@@ -108,10 +173,27 @@ struct ChatView: View {
                     ForEach(vm.chatMessages, id: \.id) { msg in
                         MessageBubble(
                             message: msg,
-                            sourceNoteTitles: sourceNoteTitles(for: msg),
-                            sourceChunkTitles: sourceChunkTitles(for: msg)
+                            sourcePreviews: sourcePreviews(for: msg),
+                            inlineCitationIds: inlineCitationIds(for: msg),
+                            stageText: vm.generationStage?.displayText,
+                            feedback: vm.feedback(for: msg.id),
+                            onCitationTap: { citation in
+                                let normalized = citation
+                                    .replacingOccurrences(of: "[", with: "")
+                                    .replacingOccurrences(of: "]", with: "")
+                                if let preview = sourcePreviews(for: msg).first(where: {
+                                    $0.citationId == normalized || $0.citationId == citation
+                                }) {
+                                    selectedSourcePreview = preview
+                                }
+                            },
+                            onWhyTapped: msg.role == "assistant" ? { whyMessageId = msg.id } : nil,
+                            onRetryDeepSearch: msg.role == "assistant" ? { retryAssistantAnswer(msg, profile: .deepSearch) } : nil,
+                            onFeedback: msg.role == "assistant" ? { feedback in
+                                vm.recordFeedback(feedback, for: msg)
+                            } : nil
                         )
-                            .id(msg.id)
+                        .id(msg.id)
                     }
                 }
                 .padding(.horizontal, 12)
@@ -139,39 +221,59 @@ struct ChatView: View {
     }
 
     private var composer: some View {
-        HStack(alignment: .bottom, spacing: 10) {
-            TextField("Ask anything...", text: $inputText, axis: .vertical)
-                .textFieldStyle(.plain)
-                .lineLimit(1...4)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 10)
-                .background(AppTheme.cardBorder.opacity(0.95))
-                .foregroundStyle(.white)
-                .clipShape(RoundedRectangle(cornerRadius: 14))
-                .disabled(vm.isGenerating)
-                .focused($isInputFocused)
+        VStack(spacing: 8) {
+            HStack(alignment: .bottom, spacing: 10) {
+                TextField("Ask anything...", text: $inputText, axis: .vertical)
+                    .textFieldStyle(.plain)
+                    .lineLimit(1...4)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 10)
+                    .background(AppTheme.cardBorder.opacity(0.95))
+                    .foregroundStyle(.white)
+                    .clipShape(RoundedRectangle(cornerRadius: 14))
+                    .disabled(vm.isGenerating)
+                    .focused($isInputFocused)
 
-            if vm.isGenerating {
+                if vm.isGenerating {
+                    Button {
+                        vm.stopGeneration()
+                    } label: {
+                        Image(systemName: "stop.fill")
+                            .font(.system(size: 16, weight: .bold))
+                            .frame(width: 42, height: 42)
+                            .background(AppTheme.redError.opacity(0.15))
+                            .foregroundStyle(AppTheme.redError)
+                            .clipShape(Circle())
+                    }
+                } else {
+                    Button(action: sendMessage) {
+                        Image(systemName: "arrow.up")
+                            .font(.system(size: 16, weight: .bold))
+                            .frame(width: 42, height: 42)
+                            .background(AppTheme.primary)
+                            .foregroundStyle(.white)
+                            .clipShape(Circle())
+                    }
+                    .disabled(inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+            }
+
+            HStack(spacing: 10) {
                 Button {
-                    vm.stopGeneration()
+                    strictForNextMessage.toggle()
+                    vm.strictGroundingMode = strictForNextMessage
                 } label: {
-                    Image(systemName: "stop.fill")
-                        .font(.system(size: 16, weight: .bold))
-                        .frame(width: 42, height: 42)
-                        .background(AppTheme.redError.opacity(0.15))
-                        .foregroundStyle(AppTheme.redError)
-                        .clipShape(Circle())
+                    Label("Strict Grounding", systemImage: strictForNextMessage ? "shield.lefthalf.filled" : "shield")
                 }
-            } else {
-                Button(action: sendMessage) {
-                    Image(systemName: "arrow.up")
-                        .font(.system(size: 16, weight: .bold))
-                        .frame(width: 42, height: 42)
-                        .background(AppTheme.primary)
-                        .foregroundStyle(.white)
-                        .clipShape(Circle())
-                }
-                .disabled(inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .buttonStyle(.bordered)
+                .tint(strictForNextMessage ? AppTheme.primary : .secondary)
+                .controlSize(.small)
+
+                Spacer()
+
+                Text("Mode: \(vm.ragRetrievalProfile.displayName)")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
             }
         }
         .padding(.horizontal, 12)
@@ -184,27 +286,195 @@ struct ChatView: View {
         guard !text.isEmpty else { return }
         inputText = ""
         isInputFocused = false
-        vm.sendMessage(text: text, notes: notes, knowledgeChunks: knowledgeChunks, modelContext: modelContext)
+        vm.sendMessage(
+            text: text,
+            notes: notes,
+            knowledgeChunks: knowledgeChunks,
+            strictGrounding: strictForNextMessage,
+            modelContext: modelContext
+        )
     }
 
-    private func sourceNoteTitles(for message: ChatMessage) -> [String] {
-        guard !message.sourceNoteIds.isEmpty else { return [] }
-        let byId = Dictionary(uniqueKeysWithValues: notes.map { ($0.id, $0) })
-        return message.sourceNoteIds.compactMap { id in
-            guard let note = byId[id] else { return nil }
-            let title = note.title.trimmingCharacters(in: .whitespacesAndNewlines)
-            return title.isEmpty ? "Untitled Note" : title
+    private func inlineCitationIds(for message: ChatMessage) -> [String] {
+        guard message.role == "assistant" else { return [] }
+        let citations = vm.citations(for: message.id)
+        if !citations.isEmpty {
+            return citations.map { "[\($0.id)]" }
         }
+        guard let regex = try? NSRegularExpression(pattern: #"\[S\d+\]"#, options: []) else {
+            return []
+        }
+        let range = NSRange(message.content.startIndex..., in: message.content)
+        let matches = regex.matches(in: message.content, options: [], range: range)
+        let values = matches.compactMap { match in
+            Range(match.range, in: message.content).map { String(message.content[$0]) }
+        }
+        var seen: Set<String> = []
+        var unique: [String] = []
+        for value in values where !seen.contains(value) {
+            seen.insert(value)
+            unique.append(value)
+        }
+        return unique
     }
 
-    private func sourceChunkTitles(for message: ChatMessage) -> [String] {
-        guard !message.sourceKnowledgeChunkIds.isEmpty else { return [] }
-        let byId = Dictionary(uniqueKeysWithValues: knowledgeChunks.map { ($0.id, $0) })
-        return message.sourceKnowledgeChunkIds.compactMap { id in
-            guard let chunk = byId[id] else { return nil }
+    private func sourcePreviews(for message: ChatMessage) -> [SourcePreview] {
+        guard message.role == "assistant" else { return [] }
+        let citations = vm.citations(for: message.id)
+        if !citations.isEmpty {
+            return citations.map { citation in
+                let subtitle: String?
+                switch citation.sourceType {
+                case .note:
+                    subtitle = "Note"
+                case .knowledgeChunk:
+                    if let index = citation.chunkIndex {
+                        subtitle = "Knowledge chunk \(index)"
+                    } else {
+                        subtitle = "Knowledge"
+                    }
+                }
+                return SourcePreview(
+                    id: citation.id,
+                    citationId: citation.id,
+                    title: citation.title,
+                    subtitle: subtitle,
+                    snippet: citation.snippet
+                )
+            }
+        }
+
+        var previews: [SourcePreview] = []
+        let noteById = Dictionary(uniqueKeysWithValues: notes.map { ($0.id, $0) })
+        let chunkById = Dictionary(uniqueKeysWithValues: knowledgeChunks.map { ($0.id, $0) })
+
+        for id in message.sourceNoteIds {
+            guard let note = noteById[id] else { continue }
+            let title = note.title.trimmingCharacters(in: .whitespacesAndNewlines)
+            previews.append(
+                SourcePreview(
+                    id: "note-\(id.uuidString)",
+                    citationId: nil,
+                    title: title.isEmpty ? "Untitled Note" : title,
+                    subtitle: "Note",
+                    snippet: String(note.content.prefix(220)).trimmingCharacters(in: .whitespacesAndNewlines)
+                )
+            )
+        }
+
+        for id in message.sourceKnowledgeChunkIds {
+            guard let chunk = chunkById[id] else { continue }
             let docTitle = chunk.document?.title.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
             let resolved = docTitle.isEmpty ? "Document" : docTitle
-            return "\(resolved) (chunk \(chunk.chunkIndex + 1))"
+            previews.append(
+                SourcePreview(
+                    id: "chunk-\(id.uuidString)",
+                    citationId: nil,
+                    title: resolved,
+                    subtitle: "Chunk \(chunk.chunkIndex + 1)",
+                    snippet: String(chunk.text.prefix(220)).trimmingCharacters(in: .whitespacesAndNewlines)
+                )
+            )
+        }
+
+        return previews
+    }
+
+    private func assistantMessage(by id: UUID?) -> ChatMessage? {
+        guard let id else { return nil }
+        return vm.chatMessages.first(where: { $0.id == id && $0.role == "assistant" })
+    }
+
+    private func retryAssistantAnswer(_ message: ChatMessage, profile: RAGRetrievalProfile) {
+        guard let messageIndex = vm.chatMessages.firstIndex(where: { $0.id == message.id }) else { return }
+        guard let userPrompt = vm.chatMessages[..<messageIndex].reversed().first(where: { $0.role == "user" })?.content else { return }
+
+        vm.sendMessage(
+            text: userPrompt,
+            notes: notes,
+            knowledgeChunks: knowledgeChunks,
+            forcedProfile: profile,
+            strictGrounding: vm.insight(for: message.id)?.strictGrounding ?? strictForNextMessage,
+            modelContext: modelContext
+        )
+    }
+}
+
+private struct WhyAnswerSheet: View {
+    let message: ChatMessage
+    let insight: AssistantAnswerInsight?
+    let sourcePreviews: [SourcePreview]
+
+    var body: some View {
+        NavigationStack {
+            List {
+                Section("Answer Quality") {
+                    LabeledContent("Confidence", value: insight?.confidence.summaryText.capitalized ?? "Unknown")
+                    LabeledContent("Search Mode", value: insight?.profile.displayName ?? "Unknown")
+                    LabeledContent("Strict Grounding", value: (insight?.strictGrounding ?? false) ? "On" : "Off")
+                    if let score = insight?.topScore {
+                        LabeledContent("Top Match Score", value: String(format: "%.2f", score))
+                    }
+                    LabeledContent("Sources Used", value: "\(insight?.sourceCount ?? sourcePreviews.count)")
+                }
+
+                Section("Why this answer") {
+                    Text("The assistant selected the sources below and used them to ground factual statements. Use feedback buttons in chat if this selection should improve.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                Section("Sources") {
+                    if sourcePreviews.isEmpty {
+                        Text("No linked sources were captured for this answer.")
+                            .foregroundStyle(.secondary)
+                    } else {
+                        ForEach(sourcePreviews) { source in
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text(source.title)
+                                    .font(.subheadline.weight(.semibold))
+                                if let subtitle = source.subtitle {
+                                    Text(subtitle)
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
+                                }
+                                Text(source.snippet)
+                                    .font(.caption)
+                            }
+                            .padding(.vertical, 4)
+                        }
+                    }
+                }
+            }
+            .navigationTitle("Why This Answer")
+            .navigationBarTitleDisplayMode(.inline)
+        }
+    }
+}
+
+private struct SourcePreviewSheet: View {
+    let preview: SourcePreview
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 12) {
+                    Text(preview.title)
+                        .font(.headline)
+                    if let subtitle = preview.subtitle {
+                        Text(subtitle)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Text(preview.snippet)
+                        .font(.body)
+                        .textSelection(.enabled)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(16)
+            }
+            .navigationTitle(preview.citationId ?? "Source")
+            .navigationBarTitleDisplayMode(.inline)
         }
     }
 }

@@ -89,6 +89,12 @@ struct KnowledgeBaseView: View {
                             VStack(alignment: .leading, spacing: 4) {
                                 Text(document.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Untitled" : document.title)
                                     .font(.body)
+                                HStack(spacing: 6) {
+                                    qualityBadge(for: document)
+                                    if needsReindex(for: document) {
+                                        statusBadge(text: "Index Needed", tint: AppTheme.redError)
+                                    }
+                                }
                                 HStack(spacing: 8) {
                                     Text(document.extractionStatus.capitalized)
                                     Text(document.mimeType)
@@ -182,6 +188,46 @@ struct KnowledgeBaseView: View {
             }
         }
     }
+
+    @ViewBuilder
+    private func qualityBadge(for document: KnowledgeDocument) -> some View {
+        let quality = extractionQuality(for: document)
+        statusBadge(text: quality.label, tint: quality.tint)
+    }
+
+    private func needsReindex(for document: KnowledgeDocument) -> Bool {
+        guard vm.currentEmbeddingModelId != nil else { return false }
+        let docChunks = chunks.filter { $0.document?.id == document.id }
+        guard !docChunks.isEmpty else { return false }
+        return docChunks.contains { !vm.isChunkIndexedForActiveEmbedding($0) }
+    }
+
+    private func extractionQuality(for document: KnowledgeDocument) -> (label: String, tint: Color) {
+        if document.extractionStatus.lowercased() != "ready" {
+            return ("Needs Review", AppTheme.redError)
+        }
+
+        let docChunks = chunks.filter { $0.document?.id == document.id }
+        guard !docChunks.isEmpty else {
+            return ("Needs Review", AppTheme.redError)
+        }
+
+        let avgTokenCount = Double(docChunks.compactMap { $0.tokenCount }.reduce(0, +)) / Double(max(1, docChunks.count))
+        if avgTokenCount > 35 {
+            return ("Good", AppTheme.greenSuccess)
+        }
+        return ("OCR Noisy", AppTheme.secondary)
+    }
+
+    private func statusBadge(text: String, tint: Color) -> some View {
+        Text(text)
+            .font(.caption2.weight(.semibold))
+            .padding(.horizontal, 8)
+            .padding(.vertical, 3)
+            .background(tint.opacity(0.16))
+            .foregroundStyle(tint)
+            .clipShape(Capsule())
+    }
 }
 
 private struct KnowledgeDocumentDetailView: View {
@@ -206,6 +252,8 @@ private struct KnowledgeDocumentDetailView: View {
                 LabeledContent("Engine", value: document.extractionEngine ?? "N/A")
                 LabeledContent("Updated", value: document.updatedAt.formatted(date: .abbreviated, time: .shortened))
                 LabeledContent("Chunks", value: "\(chunks.count)")
+                let avgTokens = Int(Double(chunks.compactMap { $0.tokenCount }.reduce(0, +)) / Double(max(1, chunks.count)))
+                LabeledContent("Avg Tokens/Chunk", value: "\(avgTokens)")
                 if let error = document.extractionError, !error.isEmpty {
                     Text(error)
                         .foregroundStyle(AppTheme.redError)

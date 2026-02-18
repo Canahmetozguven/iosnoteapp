@@ -49,7 +49,9 @@ final class BackupImporter {
                 embedding: n.embedding,
                 embeddingModelId: n.embeddingModelId,
                 embeddingUpdatedAt: n.embeddingUpdatedAt,
-                embeddingContentHash: n.embeddingContentHash
+                embeddingContentHash: n.embeddingContentHash,
+                titleNormalized: n.titleNormalized,
+                contentTokenCount: n.contentTokenCount
             ))
         }
 
@@ -85,6 +87,10 @@ final class BackupImporter {
                     embeddingModelId: c.embeddingModelId,
                     embeddingUpdatedAt: c.embeddingUpdatedAt,
                     embeddingContentHash: c.embeddingContentHash,
+                    tokenCount: c.tokenCount,
+                    charCount: c.charCount,
+                    sectionHint: c.sectionHint,
+                    documentTitleNormalized: c.documentTitleNormalized,
                     createdAt: c.createdAt,
                     updatedAt: c.updatedAt,
                     document: c.documentId.flatMap { documentsById[$0] }

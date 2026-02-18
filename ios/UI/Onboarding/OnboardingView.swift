@@ -3,9 +3,12 @@ import SwiftUI
 struct OnboardingView: View {
     @Binding var hasCompletedOnboarding: Bool
     @State private var selectedIndex = 0
+    @AppStorage(OnboardingState.ragRetrievalProfileKey) private var profileRaw = RAGRetrievalProfile.fastRecommended.rawValue
+    @AppStorage(OnboardingState.strictGroundingKey) private var strictGrounding = false
 
     private let steps: [OnboardingStep] = [
         OnboardingStep(
+            kind: .info,
             title: "Welcome to Synaps Notes",
             detail: "Capture ideas quickly, keep your notes organized, and chat with your own knowledge completely on-device.",
             points: [
@@ -17,6 +20,7 @@ struct OnboardingView: View {
             tint: AppTheme.primary
         ),
         OnboardingStep(
+            kind: .info,
             title: "Set Up AI Once",
             detail: "Before chatting, open Settings and prepare local models.",
             points: [
@@ -28,6 +32,19 @@ struct OnboardingView: View {
             tint: AppTheme.secondary
         ),
         OnboardingStep(
+            kind: .qualitySetup,
+            title: "Choose Answer Style",
+            detail: "You can change this anytime in Settings.",
+            points: [
+                "Fast is best for everyday speed.",
+                "Deep Search checks more sources before answering.",
+                "Strict grounding avoids unsupported claims."
+            ],
+            symbol: "slider.horizontal.3",
+            tint: AppTheme.primaryDark
+        ),
+        OnboardingStep(
+            kind: .info,
             title: "Chat With Your Notes",
             detail: "Use the Chat tab to ask questions. The app pulls relevant notes to answer with context (RAG).",
             points: [
@@ -39,6 +56,7 @@ struct OnboardingView: View {
             tint: AppTheme.greenSuccess
         ),
         OnboardingStep(
+            kind: .info,
             title: "Build a Knowledge Base",
             detail: "Import PDFs, images, and text into Knowledge Base. OCR extracts content and Chat retrieves relevant chunks.",
             points: [
@@ -68,10 +86,16 @@ struct OnboardingView: View {
 
             TabView(selection: $selectedIndex) {
                 ForEach(Array(steps.enumerated()), id: \.offset) { index, step in
-                    OnboardingStepCard(step: step)
-                        .padding(.horizontal, 20)
-                        .padding(.bottom, 12)
-                        .tag(index)
+                    Group {
+                        if step.kind == .qualitySetup {
+                            QualitySetupCard(profileRaw: $profileRaw, strictGrounding: $strictGrounding)
+                        } else {
+                            OnboardingStepCard(step: step)
+                        }
+                    }
+                    .padding(.horizontal, 20)
+                    .padding(.bottom, 12)
+                    .tag(index)
                 }
             }
             .tabViewStyle(.page(indexDisplayMode: .always))
@@ -119,6 +143,9 @@ struct OnboardingView: View {
     }
 
     private func completeOnboarding() {
+        if RAGRetrievalProfile(rawValue: profileRaw) == nil {
+            profileRaw = RAGRetrievalProfile.fastRecommended.rawValue
+        }
         hasCompletedOnboarding = true
     }
 }
@@ -171,7 +198,71 @@ private struct OnboardingStepCard: View {
     }
 }
 
+private struct QualitySetupCard: View {
+    @Binding var profileRaw: String
+    @Binding var strictGrounding: Bool
+
+    private var selectedProfile: RAGRetrievalProfile {
+        RAGRetrievalProfile(rawValue: profileRaw) ?? .fastRecommended
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 20) {
+            Spacer(minLength: 0)
+
+            ZStack {
+                Circle()
+                    .fill(AppTheme.primaryDark.opacity(0.14))
+                    .frame(width: 84, height: 84)
+                Image(systemName: "slider.horizontal.3")
+                    .font(.system(size: 34, weight: .semibold))
+                    .foregroundStyle(AppTheme.primaryDark)
+            }
+
+            Text("Choose Answer Style")
+                .font(.system(.title2, design: .rounded).weight(.bold))
+
+            Text("This controls how much the app searches before answering.")
+                .font(.body)
+                .foregroundStyle(.secondary)
+
+            Picker("Answer Quality", selection: Binding(
+                get: { selectedProfile },
+                set: { profileRaw = $0.rawValue }
+            )) {
+                ForEach(RAGRetrievalProfile.allCases) { profile in
+                    Text(profile.displayName).tag(profile)
+                }
+            }
+            .pickerStyle(.segmented)
+
+            Text(selectedProfile.description)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            Toggle("Strict grounding", isOn: $strictGrounding)
+            Text("When on, the assistant avoids unsupported claims and asks for more sources when needed.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+
+            Spacer(minLength: 0)
+        }
+        .padding(24)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 24, style: .continuous)
+                .fill(Color(.tertiarySystemBackground))
+        )
+    }
+}
+
 private struct OnboardingStep {
+    enum Kind {
+        case info
+        case qualitySetup
+    }
+
+    let kind: Kind
     let title: String
     let detail: String
     let points: [String]

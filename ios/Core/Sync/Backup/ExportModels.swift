@@ -21,6 +21,8 @@ struct ExportNoteV1: Codable {
     var embeddingModelId: String?
     var embeddingUpdatedAt: Date?
     var embeddingContentHash: String?
+    var titleNormalized: String?
+    var contentTokenCount: Int?
 }
 
 struct ExportChatSessionV1: Codable {
@@ -65,6 +67,10 @@ struct ExportKnowledgeChunkV1: Codable {
     var embeddingModelId: String?
     var embeddingUpdatedAt: Date?
     var embeddingContentHash: String?
+    var tokenCount: Int?
+    var charCount: Int?
+    var sectionHint: String?
+    var documentTitleNormalized: String?
     var createdAt: Date
     var updatedAt: Date
 }

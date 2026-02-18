@@ -4,6 +4,32 @@ import SwiftData
 import CryptoKit
 import UniformTypeIdentifiers
 
+enum GenerationStage: String {
+    case searchingSources
+    case rankingSources
+    case draftingAnswer
+
+    var displayText: String {
+        switch self {
+        case .searchingSources:
+            return "Searching notes and documents..."
+        case .rankingSources:
+            return "Ranking the best sources..."
+        case .draftingAnswer:
+            return "Drafting answer..."
+        }
+    }
+}
+
+struct AssistantAnswerInsight {
+    var confidence: RetrievalConfidence
+    var topScore: Float?
+    var profile: RAGRetrievalProfile
+    var strictGrounding: Bool
+    var sourceCount: Int
+    var generatedAt: Date
+}
+
 @MainActor
 @Observable
 class GlobalViewModel {
@@ -13,7 +39,7 @@ class GlobalViewModel {
     let driveSync = DriveSyncService()
     private let knowledgeIngestionService = KnowledgeIngestionService()
     var llamaContext = LlamaContext()
-    let vectorSearchService = VectorSearchService()
+    let ragPipelineService = RAGPipelineService()
 
     private enum PreferenceKey {
         static let activeChatModelId = "active_chat_model_id"
@@ -23,6 +49,10 @@ class GlobalViewModel {
         static let longAnswerMode = "long_answer_mode"
         static let lowPowerMode = "low_power_mode"
         static let activeChatSessionId = "active_chat_session_id"
+        static let ragRetrievalProfile = "rag_retrieval_profile"
+        static let strictGroundingMode = "strict_grounding_mode"
+        static let ragNoteBoosts = "rag_note_boosts"
+        static let ragChunkBoosts = "rag_chunk_boosts"
     }
 
     private enum SessionDefaults {
@@ -76,12 +106,21 @@ class GlobalViewModel {
     var lastRAGRetrievedCount: Int = 0
     var lastRAGRetrievedTitles: [String] = []
     var lastRAGRetrievedDocumentTitles: [String] = []
+    var lastRAGConfidence: RetrievalConfidence = .none
+    var lastRAGTopScore: Float? = nil
+    var lastRAGProfileUsed: RAGRetrievalProfile = .fastRecommended
+    var generationStage: GenerationStage? = nil
     var knowledgeImportStatus: String? = nil
 
     // Chat state (session-aware and persisted in SwiftData).
     var sessions: [ChatSession] = []
     var activeSessionId: UUID? = nil
     var chatMessages: [ChatMessage] = []
+    private(set) var insightByAssistantMessageId: [UUID: AssistantAnswerInsight] = [:]
+    private(set) var citationsByAssistantMessageId: [UUID: [CitationRef]] = [:]
+    private(set) var feedbackByAssistantMessageId: [UUID: AssistantAnswerFeedback] = [:]
+    private var noteFeedbackBoosts: [UUID: Float] = [:]
+    private var chunkFeedbackBoosts: [UUID: Float] = [:]
 
     // Defaults:
     // - Simulator: true (no practical Metal acceleration for this app flow)
@@ -107,6 +146,18 @@ class GlobalViewModel {
     var isLongAnswerMode: Bool = false {
         didSet {
             defaults.set(isLongAnswerMode, forKey: PreferenceKey.longAnswerMode)
+        }
+    }
+
+    var ragRetrievalProfile: RAGRetrievalProfile = .fastRecommended {
+        didSet {
+            defaults.set(ragRetrievalProfile.rawValue, forKey: PreferenceKey.ragRetrievalProfile)
+        }
+    }
+
+    var strictGroundingMode: Bool = false {
+        didSet {
+            defaults.set(strictGroundingMode, forKey: PreferenceKey.strictGroundingMode)
         }
     }
 
@@ -146,6 +197,16 @@ class GlobalViewModel {
         if let rawSessionId = defaults.string(forKey: PreferenceKey.activeChatSessionId) {
             activeSessionId = UUID(uuidString: rawSessionId)
         }
+        if let rawProfile = defaults.string(forKey: PreferenceKey.ragRetrievalProfile),
+           let profile = RAGRetrievalProfile(rawValue: rawProfile) {
+            ragRetrievalProfile = profile
+        } else {
+            ragRetrievalProfile = .fastRecommended
+            defaults.set(ragRetrievalProfile.rawValue, forKey: PreferenceKey.ragRetrievalProfile)
+        }
+        strictGroundingMode = defaults.bool(forKey: PreferenceKey.strictGroundingMode)
+        noteFeedbackBoosts = loadBoostMap(forKey: PreferenceKey.ragNoteBoosts)
+        chunkFeedbackBoosts = loadBoostMap(forKey: PreferenceKey.ragChunkBoosts)
         normalizeStoredModelSelections()
     }
 
@@ -346,6 +407,7 @@ class GlobalViewModel {
         isChatModelLoading = false
         isEmbeddingModelLoading = false
         isOCRModelLoading = false
+        generationStage = nil
     }
 
     // MARK: - Chat
@@ -354,6 +416,8 @@ class GlobalViewModel {
         text: String,
         notes: [Note] = [],
         knowledgeChunks: [KnowledgeChunk] = [],
+        forcedProfile: RAGRetrievalProfile? = nil,
+        strictGrounding: Bool? = nil,
         modelContext: ModelContext
     ) {
         guard isChatModelLoaded, !isGenerating else { return }
@@ -369,6 +433,8 @@ class GlobalViewModel {
             session.title = autoTitle(from: userMessageText)
         }
         session.updatedAt = Date()
+        let retrievalProfile = forcedProfile ?? ragRetrievalProfile
+        let strictGroundingRequest = strictGrounding ?? strictGroundingMode
 
         let userMessage = ChatMessage(role: "user", content: userMessageText, session: session)
         modelContext.insert(userMessage)
@@ -386,120 +452,86 @@ class GlobalViewModel {
         lastRAGRetrievedCount = 0
         lastRAGRetrievedTitles = []
         lastRAGRetrievedDocumentTitles = []
+        lastRAGConfidence = .none
+        lastRAGTopScore = nil
+        lastRAGProfileUsed = retrievalProfile
+        generationStage = .searchingSources
 
         generationTask = Task { @MainActor in
             var ragNoteContext: [Note] = []
             var ragChunkContext: [KnowledgeChunk] = []
-            let keywordNoteFallback: () -> [Note] = {
-                self.vectorSearchService.findKeywordMatches(
-                    queryText: userMessageText,
-                    notes: notes,
-                    topK: 3
-                )
-            }
-            let keywordChunkFallback: () -> [KnowledgeChunk] = {
-                self.vectorSearchService.findKeywordMatchesInChunks(
-                    queryText: userMessageText,
-                    chunks: knowledgeChunks,
-                    topK: 3
-                )
-            }
+            var ragCitations: [CitationRef] = []
+            var ragConfidence: RetrievalConfidence = .none
 
             if !notes.isEmpty || !knowledgeChunks.isEmpty {
+                self.generationStage = .searchingSources
                 let ragReady = await ensureRAGReadyBeforeSend(
                     notes: notes,
                     knowledgeChunks: knowledgeChunks,
                     modelContext: modelContext
                 )
-                if ragReady, isEmbeddingModelLoaded {
-                    let eligibleNotes = notes.filter { isNoteEmbeddingFresh($0) }
-                    let eligibleChunks = knowledgeChunks.filter { isKnowledgeChunkEmbeddingFresh($0) }
-                    self.lastRAGEligibleNotesCount = eligibleNotes.count
-                    self.lastRAGEligibleChunksCount = eligibleChunks.count
-                    if eligibleNotes.isEmpty && eligibleChunks.isEmpty {
-                        let fallbackNotes = keywordNoteFallback()
-                        let fallbackChunks = keywordChunkFallback()
-                        ragNoteContext = Array(fallbackNotes.prefix(2))
-                        ragChunkContext = Array(fallbackChunks.prefix(max(0, 3 - ragNoteContext.count)))
-                        if ragNoteContext.isEmpty && ragChunkContext.isEmpty {
-                            self.ragStatus = .noIndexedNotes
-                        } else {
-                            self.applyRetrievedContextMetadata(notes: ragNoteContext, chunks: ragChunkContext)
-                            self.ragStatus = .usedContext(count: ragNoteContext.count + ragChunkContext.count)
+                let eligibleNotes = notes.filter { isNoteEmbeddingFresh($0) }
+                let eligibleChunks = knowledgeChunks.filter { isKnowledgeChunkEmbeddingFresh($0) }
+                self.lastRAGEligibleNotesCount = eligibleNotes.count
+                self.lastRAGEligibleChunksCount = eligibleChunks.count
+
+                var queryEmbedding: [Float]? = nil
+                var vectorError: String? = nil
+                if ragReady, isEmbeddingModelLoaded, (!eligibleNotes.isEmpty || !eligibleChunks.isEmpty) {
+                    do {
+                        let embedded = try await llamaContext.embedWithEmbeddingModel(text: userMessageText)
+                        queryEmbedding = embedded.isEmpty ? nil : embedded
+                        if queryEmbedding == nil {
+                            vectorError = LlamaError.noEmbeddings.localizedDescription
                         }
+                    } catch {
+                        vectorError = error.localizedDescription
+                    }
+                }
+                self.generationStage = .rankingSources
+
+                let retrieval = self.ragPipelineService.retrieveContext(
+                    queryText: userMessageText,
+                    queryEmbedding: queryEmbedding,
+                    notes: notes,
+                    chunks: knowledgeChunks,
+                    noteBoosts: self.noteFeedbackBoosts,
+                    chunkBoosts: self.chunkFeedbackBoosts,
+                    semanticNoteIds: Set(eligibleNotes.map(\.id)),
+                    semanticChunkIds: Set(eligibleChunks.map(\.id)),
+                    profile: retrievalProfile
+                )
+                ragNoteContext = retrieval.selectedNotes
+                ragChunkContext = retrieval.selectedChunks
+                ragCitations = retrieval.citations
+                ragConfidence = retrieval.confidence
+                self.applyRetrievedContextMetadata(
+                    notes: ragNoteContext,
+                    chunks: ragChunkContext,
+                    confidence: retrieval.confidence,
+                    topScore: retrieval.topScore
+                )
+
+                if ragNoteContext.isEmpty && ragChunkContext.isEmpty {
+                    if ragReady, isEmbeddingModelLoaded, eligibleNotes.isEmpty && eligibleChunks.isEmpty {
+                        self.ragStatus = .noIndexedNotes
+                    } else if let vectorError {
+                        self.ragStatus = .failed(vectorError)
                     } else {
-                        var foundNotes: [Note] = []
-                        var foundChunks: [KnowledgeChunk] = []
-                        var vectorError: String? = nil
-
-                        do {
-                            let queryEmbedding = try await llamaContext.embedWithEmbeddingModel(text: userMessageText)
-                            guard !queryEmbedding.isEmpty else {
-                                throw LlamaError.noEmbeddings
-                            }
-
-                            typealias Scored = (score: Float, note: Note?, chunk: KnowledgeChunk?)
-                            var scored: [Scored] = []
-
-                            let compatibleNotes = eligibleNotes.filter {
-                                ($0.embedding?.count ?? 0) == queryEmbedding.count
-                            }
-                            for note in compatibleNotes {
-                                guard let embedding = note.embedding,
-                                      let score = vectorSearchService.scoreEmbedding(queryEmbedding: queryEmbedding, candidateEmbedding: embedding) else { continue }
-                                scored.append((score: score, note: note, chunk: nil))
-                            }
-
-                            let compatibleChunks = eligibleChunks.filter {
-                                ($0.embedding?.count ?? 0) == queryEmbedding.count
-                            }
-                            for chunk in compatibleChunks {
-                                guard let embedding = chunk.embedding,
-                                      let score = vectorSearchService.scoreEmbedding(queryEmbedding: queryEmbedding, candidateEmbedding: embedding) else { continue }
-                                scored.append((score: score, note: nil, chunk: chunk))
-                            }
-
-                            let top = scored.sorted { $0.score > $1.score }.prefix(3)
-                            for item in top {
-                                if let note = item.note {
-                                    foundNotes.append(note)
-                                } else if let chunk = item.chunk {
-                                    foundChunks.append(chunk)
-                                }
-                            }
-                        } catch {
-                            vectorError = error.localizedDescription
-                        }
-
-                        if foundNotes.isEmpty && foundChunks.isEmpty {
-                            let fallbackNotes = keywordNoteFallback()
-                            let fallbackChunks = keywordChunkFallback()
-                            foundNotes = Array(fallbackNotes.prefix(2))
-                            foundChunks = Array(fallbackChunks.prefix(max(0, 3 - foundNotes.count)))
-                        }
-
-                        ragNoteContext = foundNotes
-                        ragChunkContext = foundChunks
-                        self.applyRetrievedContextMetadata(notes: foundNotes, chunks: foundChunks)
-                        if foundNotes.isEmpty && foundChunks.isEmpty, let vectorError {
-                            self.ragStatus = .failed(vectorError)
-                        } else {
-                            self.ragStatus = .usedContext(count: foundNotes.count + foundChunks.count)
-                        }
+                        self.ragStatus = .usedContext(count: 0)
                     }
                 } else {
-                    let fallbackNotes = keywordNoteFallback()
-                    let fallbackChunks = keywordChunkFallback()
-                    ragNoteContext = Array(fallbackNotes.prefix(2))
-                    ragChunkContext = Array(fallbackChunks.prefix(max(0, 3 - ragNoteContext.count)))
-                    self.applyRetrievedContextMetadata(notes: ragNoteContext, chunks: ragChunkContext)
-                    if !ragNoteContext.isEmpty || !ragChunkContext.isEmpty {
-                        self.ragStatus = .usedContext(count: ragNoteContext.count + ragChunkContext.count)
-                    }
+                    self.ragStatus = .usedContext(count: retrieval.selectedCount)
                 }
             }
 
-            let messages = buildMessageHistory(ragNotes: ragNoteContext, ragChunks: ragChunkContext)
+            let messages = buildMessageHistory(
+                ragNotes: ragNoteContext,
+                ragChunks: ragChunkContext,
+                citations: ragCitations,
+                retrievalConfidence: ragConfidence,
+                strictGrounding: strictGroundingRequest
+            )
             let prompt = await llamaContext.applyTemplate(messages: messages)
 
             let sourceNoteIds = ragNoteContext.map { $0.id }
@@ -513,6 +545,16 @@ class GlobalViewModel {
             )
             modelContext.insert(assistantMessage)
             chatMessages.append(assistantMessage)
+            citationsByAssistantMessageId[assistantMessage.id] = ragCitations
+            insightByAssistantMessageId[assistantMessage.id] = AssistantAnswerInsight(
+                confidence: ragConfidence,
+                topScore: lastRAGTopScore,
+                profile: retrievalProfile,
+                strictGrounding: strictGroundingRequest,
+                sourceCount: ragCitations.count,
+                generatedAt: Date()
+            )
+            generationStage = .draftingAnswer
 
             var fullResponse = ""
 
@@ -536,6 +578,7 @@ class GlobalViewModel {
             try? modelContext.save()
             try? refreshSessions(modelContext: modelContext)
             self.isGenerating = false
+            self.generationStage = nil
         }
     }
 
@@ -546,6 +589,7 @@ class GlobalViewModel {
             await llamaContext.stopCompletion()
         }
         isGenerating = false
+        generationStage = nil
     }
 
     func ragStatusText() -> String? {
@@ -573,13 +617,62 @@ class GlobalViewModel {
         if lastRAGPreparedNotesCount == 0 && lastRAGPreparedChunksCount == 0 && lastRAGEligibleNotesCount == 0 && lastRAGEligibleChunksCount == 0 && lastRAGRetrievedCount == 0 {
             return nil
         }
+        let scoreText: String
+        if let score = lastRAGTopScore {
+            scoreText = String(format: "%.2f", score)
+        } else {
+            scoreText = "-"
+        }
         if lastRAGRetrievedTitles.isEmpty && lastRAGRetrievedDocumentTitles.isEmpty {
-            return "RAG: notes prepared \(lastRAGPreparedNotesCount), chunks prepared \(lastRAGPreparedChunksCount), notes eligible \(lastRAGEligibleNotesCount), chunks eligible \(lastRAGEligibleChunksCount), retrieved \(lastRAGRetrievedCount)"
+            return "RAG: notes prepared \(lastRAGPreparedNotesCount), chunks prepared \(lastRAGPreparedChunksCount), notes eligible \(lastRAGEligibleNotesCount), chunks eligible \(lastRAGEligibleChunksCount), retrieved \(lastRAGRetrievedCount), confidence \(lastRAGConfidence.summaryText), top \(scoreText), mode \(lastRAGProfileUsed.displayName)"
         }
         let joinedNotes = lastRAGRetrievedTitles.prefix(2).joined(separator: ", ")
         let joinedDocs = lastRAGRetrievedDocumentTitles.prefix(2).joined(separator: ", ")
         let preview = [joinedNotes, joinedDocs].filter { !$0.isEmpty }.joined(separator: " | ")
-        return "RAG: notes prepared \(lastRAGPreparedNotesCount), chunks prepared \(lastRAGPreparedChunksCount), notes eligible \(lastRAGEligibleNotesCount), chunks eligible \(lastRAGEligibleChunksCount), retrieved \(lastRAGRetrievedCount) [\(preview)]"
+        return "RAG: notes prepared \(lastRAGPreparedNotesCount), chunks prepared \(lastRAGPreparedChunksCount), notes eligible \(lastRAGEligibleNotesCount), chunks eligible \(lastRAGEligibleChunksCount), retrieved \(lastRAGRetrievedCount), confidence \(lastRAGConfidence.summaryText), top \(scoreText), mode \(lastRAGProfileUsed.displayName) [\(preview)]"
+    }
+
+    func citations(for assistantMessageId: UUID) -> [CitationRef] {
+        citationsByAssistantMessageId[assistantMessageId] ?? []
+    }
+
+    func insight(for assistantMessageId: UUID) -> AssistantAnswerInsight? {
+        insightByAssistantMessageId[assistantMessageId]
+    }
+
+    func feedback(for assistantMessageId: UUID) -> AssistantAnswerFeedback? {
+        feedbackByAssistantMessageId[assistantMessageId]
+    }
+
+    func recordFeedback(_ feedback: AssistantAnswerFeedback, for message: ChatMessage) {
+        guard message.role == "assistant" else { return }
+        if let previous = feedbackByAssistantMessageId[message.id] {
+            applyFeedbackDelta(delta(for: previous) * -1, to: message)
+        }
+        feedbackByAssistantMessageId[message.id] = feedback
+        applyFeedbackDelta(delta(for: feedback), to: message)
+        saveBoostMap(noteFeedbackBoosts, forKey: PreferenceKey.ragNoteBoosts)
+        saveBoostMap(chunkFeedbackBoosts, forKey: PreferenceKey.ragChunkBoosts)
+    }
+
+    private func delta(for feedback: AssistantAnswerFeedback) -> Float {
+        switch feedback {
+        case .notRelevant:
+            return -0.06
+        case .partlyWrong:
+            return -0.03
+        case .missingSource:
+            return -0.01
+        }
+    }
+
+    private func applyFeedbackDelta(_ delta: Float, to message: ChatMessage) {
+        for noteId in message.sourceNoteIds {
+            noteFeedbackBoosts[noteId] = clampedBoost((noteFeedbackBoosts[noteId] ?? 0) + delta)
+        }
+        for chunkId in message.sourceKnowledgeChunkIds {
+            chunkFeedbackBoosts[chunkId] = clampedBoost((chunkFeedbackBoosts[chunkId] ?? 0) + delta)
+        }
     }
 
     // MARK: - Indexing (RAG)
@@ -723,6 +816,10 @@ class GlobalViewModel {
         chunks.filter { isKnowledgeChunkEmbeddingFresh($0) }.count
     }
 
+    func isChunkIndexedForActiveEmbedding(_ chunk: KnowledgeChunk) -> Bool {
+        isKnowledgeChunkEmbeddingFresh(chunk)
+    }
+
     // MARK: - Helpers
 
     private func loadMessages(for session: ChatSession, modelContext: ModelContext) {
@@ -817,7 +914,13 @@ class GlobalViewModel {
         sessions = try modelContext.fetch(descriptor)
     }
 
-    private func buildMessageHistory(ragNotes: [Note] = [], ragChunks: [KnowledgeChunk] = []) -> [[String: String]] {
+    private func buildMessageHistory(
+        ragNotes: [Note] = [],
+        ragChunks: [KnowledgeChunk] = [],
+        citations: [CitationRef] = [],
+        retrievalConfidence: RetrievalConfidence = .none,
+        strictGrounding: Bool = false
+    ) -> [[String: String]] {
         var messages: [[String: String]] = []
         var systemContent = """
         You are a helpful assistant.
@@ -825,10 +928,23 @@ class GlobalViewModel {
         Do not output chain-of-thought or reasoning tags such as <think>...</think>.
         If context is insufficient, say you are not sure instead of guessing.
         """
-        let contextBlock = ragContextBlock(notes: ragNotes, chunks: ragChunks)
+        let contextBlock = ragContextBlock(notes: ragNotes, chunks: ragChunks, citations: citations)
 
         if !contextBlock.isEmpty {
-            systemContent += "\n\nUse retrieved knowledge when relevant, and prefer grounded answers."
+            systemContent += """
+
+            Use retrieved knowledge as the primary source for factual claims.
+            Cite grounded claims using [S#] references from the retrieved context.
+            Never invent a source id.
+            """
+            if retrievalConfidence == .low || retrievalConfidence == .none {
+                systemContent += "\n\nRetrieved evidence confidence is low. Be explicit about uncertainty when evidence is weak."
+            }
+            if strictGrounding {
+                systemContent += "\n\nStrict grounding mode is ON: do not use facts that are not supported by retrieved context."
+            }
+        } else if strictGrounding {
+            systemContent += "\n\nStrict grounding mode is ON. If evidence is missing, answer: \"I don't have enough evidence in your notes or knowledge base.\" and ask for more sources."
         }
 
         messages.append([
@@ -858,29 +974,75 @@ class GlobalViewModel {
         return messages
     }
 
-    private func ragContextBlock(notes: [Note], chunks: [KnowledgeChunk]) -> String {
-        var lines: [String] = []
+    private func ragContextBlock(notes: [Note], chunks: [KnowledgeChunk], citations: [CitationRef]) -> String {
+        if !citations.isEmpty {
+            return citations.map { citation in
+                switch citation.sourceType {
+                case .note:
+                    return "- [\(citation.id)] [Note: \(citation.title)] \(citation.snippet)"
+                case .knowledgeChunk:
+                    let indexText = citation.chunkIndex.map { " / chunk \($0)" } ?? ""
+                    return "- [\(citation.id)] [KB: \(citation.title)\(indexText)] \(citation.snippet)"
+                }
+            }.joined(separator: "\n")
+        }
 
-        for note in notes {
-            let title = note.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Untitled" : note.title
-            let snippet = String(note.content.prefix(500)).trimmingCharacters(in: .whitespacesAndNewlines)
-            lines.append("- [Note: \(title)] \(snippet)")
+        var fallbackCitations: [CitationRef] = []
+        for (index, note) in notes.enumerated() {
+            let title = note.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Untitled Note" : note.title
+            let snippet = String(note.content.prefix(550)).trimmingCharacters(in: .whitespacesAndNewlines)
+            fallbackCitations.append(
+                CitationRef(
+                    id: "S\(index + 1)",
+                    sourceType: .note,
+                    title: title,
+                    chunkIndex: nil,
+                    noteId: note.id,
+                    chunkId: nil,
+                    snippet: snippet
+                )
+            )
         }
 
         for chunk in chunks {
             let rawTitle = chunk.document?.title.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            let docTitle = rawTitle.isEmpty ? "Document" : rawTitle
-            let snippet = String(chunk.text.prefix(500)).trimmingCharacters(in: .whitespacesAndNewlines)
-            lines.append("- [KB: \(docTitle) / chunk \(chunk.chunkIndex + 1)] \(snippet)")
+            let title = rawTitle.isEmpty ? "Document" : rawTitle
+            let snippet = String(chunk.text.prefix(550)).trimmingCharacters(in: .whitespacesAndNewlines)
+            fallbackCitations.append(
+                CitationRef(
+                    id: "S\(fallbackCitations.count + 1)",
+                    sourceType: .knowledgeChunk,
+                    title: title,
+                    chunkIndex: chunk.chunkIndex + 1,
+                    noteId: nil,
+                    chunkId: chunk.id,
+                    snippet: snippet
+                )
+            )
         }
 
-        return lines.joined(separator: "\n")
+        return fallbackCitations.map { citation in
+            switch citation.sourceType {
+            case .note:
+                return "- [\(citation.id)] [Note: \(citation.title)] \(citation.snippet)"
+            case .knowledgeChunk:
+                let indexText = citation.chunkIndex.map { " / chunk \($0)" } ?? ""
+                return "- [\(citation.id)] [KB: \(citation.title)\(indexText)] \(citation.snippet)"
+            }
+        }.joined(separator: "\n")
     }
 
-    private func applyRetrievedContextMetadata(notes: [Note], chunks: [KnowledgeChunk]) {
+    private func applyRetrievedContextMetadata(
+        notes: [Note],
+        chunks: [KnowledgeChunk],
+        confidence: RetrievalConfidence = .none,
+        topScore: Float? = nil
+    ) {
         retrievedContext = notes
         retrievedKnowledgeContext = chunks
         lastRAGRetrievedCount = notes.count + chunks.count
+        lastRAGConfidence = confidence
+        lastRAGTopScore = topScore
         lastRAGRetrievedTitles = notes.map {
             $0.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Untitled" : $0.title
         }
@@ -1255,6 +1417,57 @@ class GlobalViewModel {
         return digest.map { String(format: "%02x", $0) }.joined()
     }
 
+    private func normalizedForSearch(_ text: String) -> String {
+        text
+            .lowercased()
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func tokenCountEstimate(_ text: String) -> Int {
+        text
+            .split(whereSeparator: { $0.isWhitespace || $0.isNewline })
+            .count
+    }
+
+    private func inferSectionHint(from text: String) -> String? {
+        let lines = text
+            .split(separator: "\n", omittingEmptySubsequences: true)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+
+        guard let first = lines.first, !first.isEmpty else { return nil }
+        if first.count > 90 {
+            return nil
+        }
+        let words = first.split(separator: " ").count
+        guard words > 0 && words <= 12 else { return nil }
+        return first
+    }
+
+    private func loadBoostMap(forKey key: String) -> [UUID: Float] {
+        guard let raw = defaults.dictionary(forKey: key) else { return [:] }
+        var result: [UUID: Float] = [:]
+        for (idString, value) in raw {
+            guard let id = UUID(uuidString: idString) else { continue }
+            if let numeric = value as? NSNumber {
+                result[id] = Float(truncating: numeric)
+            }
+        }
+        return result
+    }
+
+    private func saveBoostMap(_ map: [UUID: Float], forKey key: String) {
+        var serialized: [String: Double] = [:]
+        serialized.reserveCapacity(map.count)
+        for (id, value) in map {
+            serialized[id.uuidString] = Double(value)
+        }
+        defaults.set(serialized, forKey: key)
+    }
+
+    private func clampedBoost(_ value: Float) -> Float {
+        max(-0.2, min(0.2, value))
+    }
+
     private func knowledgeChunkContentHash(_ chunk: KnowledgeChunk) -> String {
         let digest = SHA256.hash(data: Data(chunk.text.utf8))
         return digest.map { String(format: "%02x", $0) }.joined()
@@ -1349,6 +1562,8 @@ class GlobalViewModel {
         note.embeddingModelId = embeddingModelId
         note.embeddingUpdatedAt = Date()
         note.embeddingContentHash = contentHash
+        note.titleNormalized = normalizedForSearch(note.title)
+        note.contentTokenCount = tokenCountEstimate(note.content)
 
         try? modelContext.save()
     }
@@ -1396,6 +1611,10 @@ class GlobalViewModel {
         chunk.embeddingModelId = embeddingModelId
         chunk.embeddingUpdatedAt = Date()
         chunk.embeddingContentHash = contentHash
+        chunk.tokenCount = tokenCountEstimate(chunk.text)
+        chunk.charCount = chunk.text.count
+        chunk.sectionHint = inferSectionHint(from: chunk.text)
+        chunk.documentTitleNormalized = normalizedForSearch(chunk.document?.title ?? "")
         chunk.updatedAt = Date()
 
         try? modelContext.save()
@@ -1649,6 +1868,10 @@ extension GlobalViewModel {
             let chunk = KnowledgeChunk(
                 chunkIndex: index,
                 text: text,
+                tokenCount: tokenCountEstimate(text),
+                charCount: text.count,
+                sectionHint: inferSectionHint(from: text),
+                documentTitleNormalized: normalizedForSearch(document.title),
                 createdAt: Date(),
                 updatedAt: Date(),
                 document: document

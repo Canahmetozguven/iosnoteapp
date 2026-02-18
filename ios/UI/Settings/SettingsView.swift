@@ -92,18 +92,6 @@ struct SettingsView: View {
                             .foregroundStyle(.secondary)
                     }
                     HStack {
-                        Text("Vision Model")
-                        Spacer()
-                        Text(vm.displayName(for: vm.currentOCRModelId))
-                            .foregroundStyle(.secondary)
-                    }
-                    HStack {
-                        Text("OCR Backend")
-                        Spacer()
-                        Text("Apple Vision (Temporary)")
-                            .foregroundStyle(.secondary)
-                    }
-                    HStack {
                         Text("Chats")
                         Spacer()
                         Text("\(vm.sessions.count)")
@@ -166,43 +154,6 @@ struct SettingsView: View {
                     }
                 }
 
-                Section("Vision Models (OCR/VL)") {
-                    Toggle("Use Vision Model For OCR Imports (Deprecated)", isOn: .constant(false))
-                        .disabled(true)
-
-                    let items = (vm.catalogStore.items(kind: .ocr) + vm.catalogStore.items(kind: .vl))
-                        .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
-                    if items.isEmpty {
-                        Text("No vision models in catalog. Add one in Custom Models.")
-                            .foregroundStyle(.secondary)
-                    } else {
-                        ForEach(items) { item in
-                            ModelRow(
-                                item: item,
-                                isActive: vm.currentOCRModelId == item.id && vm.isOCRModelLoaded,
-                                isInstalled: vm.isInstalled(item),
-                                downloadState: vm.downloads.state(for: item.id),
-                                isBusy: vm.isBusy,
-                                isEnabled: true,
-                                onGet: { vm.startDownload(item) },
-                                onCancel: { vm.cancelDownload(modelId: item.id) },
-                                onLoad: { vm.loadOCRModel(item: item) },
-                                onReload: { vm.reloadOCRModel(item: item) },
-                                onOffload: { vm.offloadAllModels() },
-                                onDelete: { vm.deleteDownloaded(item) }
-                            )
-                        }
-                    }
-
-                    Text("Apple Vision OCR is active for all imports. Local OCR/VL model inference is temporarily deprecated.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-
-                    Text("Vision models remain downloadable as a planned feature for a future release.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-
                 Section("Custom Models") {
                     Button {
                         showingAddCustomModel = true
@@ -233,6 +184,25 @@ struct SettingsView: View {
                 Section("RAG") {
                     let indexedCount = vm.indexedCountForActiveEmbedding(notes: notes)
                     let indexedChunkCount = vm.indexedKnowledgeChunkCountForActiveEmbedding(chunks: knowledgeChunks)
+
+                    Picker("Answer Quality", selection: Bindable(vm).ragRetrievalProfile) {
+                        ForEach(RAGRetrievalProfile.allCases) { profile in
+                            Text(profile.displayName).tag(profile)
+                        }
+                    }
+
+                    Text(vm.ragRetrievalProfile.description)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
+                    Text("This controls how much your app searches before answering. Fast is best for everyday chat; Deep Search is better for tricky factual questions.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
+                    Toggle("Strict Grounding", isOn: Bindable(vm).strictGroundingMode)
+                    Text("When enabled, answers stick to retrieved notes/documents and clearly say when evidence is missing.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
 
                     HStack {
                         Text("Fresh embeddings")

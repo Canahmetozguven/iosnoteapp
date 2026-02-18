@@ -29,24 +29,148 @@ final class TextChunkingService {
     }
 
     private func chunkSingle(_ text: String, chunkSize: Int, overlap: Int) -> [String] {
-        let chars = Array(text)
         let safeSize = max(200, chunkSize)
         let safeOverlap = max(0, min(overlap, safeSize - 1))
-        let step = max(1, safeSize - safeOverlap)
+        let units = semanticUnits(from: text, unitMaxLength: safeSize)
+        guard !units.isEmpty else { return [] }
 
-        var result: [String] = []
-        var start = 0
-        while start < chars.count {
-            let end = min(chars.count, start + safeSize)
-            let chunk = String(chars[start..<end]).trimmingCharacters(in: .whitespacesAndNewlines)
-            if !chunk.isEmpty {
-                result.append(chunk)
+        var baseChunks: [String] = []
+        var current = ""
+
+        for unit in units {
+            if current.isEmpty {
+                current = unit
+                continue
             }
-            if end == chars.count {
-                break
+
+            let separator = "\n\n"
+            let candidate = current + separator + unit
+            if candidate.count <= safeSize {
+                current = candidate
+            } else {
+                let trimmed = current.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !trimmed.isEmpty {
+                    baseChunks.append(trimmed)
+                }
+                current = unit
             }
-            start += step
         }
+
+        let trailing = current.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trailing.isEmpty {
+            baseChunks.append(trailing)
+        }
+        if safeOverlap == 0 || baseChunks.count < 2 {
+            return baseChunks
+        }
+        return applyOverlap(baseChunks, overlap: safeOverlap, maxLength: safeSize)
+    }
+
+    private func semanticUnits(from text: String, unitMaxLength: Int) -> [String] {
+        let paragraphs = text
+            .components(separatedBy: "\n\n")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+
+        var units: [String] = []
+        for paragraph in paragraphs {
+            if paragraph.count <= unitMaxLength {
+                units.append(paragraph)
+                continue
+            }
+
+            let sentenceUnits = splitIntoSentences(paragraph)
+            var sentenceBuffer = ""
+            for sentence in sentenceUnits {
+                if sentenceBuffer.isEmpty {
+                    sentenceBuffer = sentence
+                } else if sentenceBuffer.count + 1 + sentence.count <= unitMaxLength {
+                    sentenceBuffer += " " + sentence
+                } else {
+                    appendOrSplit(sentenceBuffer, into: &units, maxLength: unitMaxLength)
+                    sentenceBuffer = sentence
+                }
+            }
+
+            if !sentenceBuffer.isEmpty {
+                appendOrSplit(sentenceBuffer, into: &units, maxLength: unitMaxLength)
+            }
+        }
+
+        if units.isEmpty {
+            appendOrSplit(text, into: &units, maxLength: unitMaxLength)
+        }
+        return units
+    }
+
+    private func appendOrSplit(_ text: String, into units: inout [String], maxLength: Int) {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        if trimmed.count <= maxLength {
+            units.append(trimmed)
+            return
+        }
+
+        var start = trimmed.startIndex
+        while start < trimmed.endIndex {
+            let end = trimmed.index(start, offsetBy: maxLength, limitedBy: trimmed.endIndex) ?? trimmed.endIndex
+            let part = String(trimmed[start..<end]).trimmingCharacters(in: .whitespacesAndNewlines)
+            if !part.isEmpty {
+                units.append(part)
+            }
+            start = end
+        }
+    }
+
+    private func splitIntoSentences(_ text: String) -> [String] {
+        let pattern = #"(?<=[\.\!\?])\s+"#
+        guard let regex = try? NSRegularExpression(pattern: pattern) else {
+            return [text]
+        }
+
+        let range = NSRange(text.startIndex..., in: text)
+        var start = text.startIndex
+        var sentences: [String] = []
+
+        for match in regex.matches(in: text, options: [], range: range) {
+            guard let boundary = Range(match.range, in: text) else { continue }
+            let sentence = String(text[start..<boundary.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
+            if !sentence.isEmpty {
+                sentences.append(sentence)
+            }
+            start = boundary.upperBound
+        }
+
+        let trailing = String(text[start...]).trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trailing.isEmpty {
+            sentences.append(trailing)
+        }
+        return sentences.isEmpty ? [text] : sentences
+    }
+
+    private func applyOverlap(_ chunks: [String], overlap: Int, maxLength: Int) -> [String] {
+        guard chunks.count > 1 else { return chunks }
+        var result: [String] = []
+        result.reserveCapacity(chunks.count)
+
+        for index in chunks.indices {
+            if index == 0 {
+                result.append(chunks[index])
+                continue
+            }
+
+            let previousTail = String(chunks[index - 1].suffix(overlap)).trimmingCharacters(in: .whitespacesAndNewlines)
+            var merged = previousTail.isEmpty ? chunks[index] : "\(previousTail)\n\(chunks[index])"
+            if merged.count > maxLength {
+                merged = String(merged.prefix(maxLength))
+            }
+            merged = merged.trimmingCharacters(in: .whitespacesAndNewlines)
+            if merged.isEmpty {
+                merged = chunks[index]
+            }
+            result.append(merged)
+        }
+
         return result
     }
 }
