@@ -216,9 +216,10 @@ actor LlamaContext {
         }
 
         var ctxParams = llama_context_default_params()
-        // OCR/VL tasks use short prompts; keep context smaller for better load reliability on iOS.
-        ctxParams.n_ctx = lowMemory ? 1024 : 2048
-        ctxParams.n_batch = 256
+        // Multimodal models can require larger context windows for image token chunks.
+        // llama.cpp docs/tests frequently use 8k for reliable VLM behavior.
+        ctxParams.n_ctx = lowMemory ? 4096 : 8192
+        ctxParams.n_batch = lowMemory ? 256 : 512
 
         self.contextOCR = llama_init_from_model(modelOCR, ctxParams)
         guard self.contextOCR != nil else {
@@ -270,7 +271,19 @@ actor LlamaContext {
         }
 
         let marker = visionOCRMarker
-        let prompt = "\(marker)\nTranscribe only text that is clearly visible in this image. Do not infer or add missing words. Return plain text only."
+        let prompt = applyTemplate(
+            messages: [
+                [
+                    "role": "system",
+                    "content": "You are an OCR transcription engine. Return plain text only and do not add explanations."
+                ],
+                [
+                    "role": "user",
+                    "content": "\(marker)\nTranscribe all visible text exactly as written. Preserve line breaks."
+                ]
+            ],
+            model: modelOCR
+        )
         let promptC = strdup(prompt)
         guard let promptC else { throw LlamaError.decodeFailed }
         defer { free(promptC) }
@@ -333,18 +346,19 @@ actor LlamaContext {
         let trimmed = rawText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return "" }
 
-        let prompt = """
-        You are an OCR cleanup assistant.
-        Correct obvious OCR character mistakes only.
-        Do not add new content and do not invent missing words.
-        Preserve line breaks and formatting.
-        Return only corrected text.
-
-        OCR INPUT:
-        \(trimmed)
-
-        CORRECTED OUTPUT:
-        """
+        let prompt = applyTemplate(
+            messages: [
+                [
+                    "role": "system",
+                    "content": "You are an OCR cleanup assistant. Correct obvious OCR character errors only. Do not invent content."
+                ],
+                [
+                    "role": "user",
+                    "content": "Preserve line breaks and formatting.\n\nOCR INPUT:\n\(trimmed)\n\nReturn only corrected text."
+                ]
+            ],
+            model: modelOCR
+        )
         return try generateText(
             prompt: prompt,
             context: contextOCR,
@@ -787,7 +801,11 @@ actor LlamaContext {
     }
     
     func applyTemplate(messages: [[String: String]]) -> String {
-        guard let model = self.model, !messages.isEmpty else {
+        applyTemplate(messages: messages, model: self.model)
+    }
+
+    private func applyTemplate(messages: [[String: String]], model: OpaquePointer?) -> String {
+        guard let model, !messages.isEmpty else {
             return applyManualTemplate(messages: messages)
         }
 
