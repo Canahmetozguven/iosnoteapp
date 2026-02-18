@@ -146,6 +146,7 @@ class GlobalViewModel {
         if let rawSessionId = defaults.string(forKey: PreferenceKey.activeChatSessionId) {
             activeSessionId = UUID(uuidString: rawSessionId)
         }
+        normalizeStoredModelSelections()
     }
 
     // MARK: - Bootstrap and Session Management
@@ -945,6 +946,22 @@ class GlobalViewModel {
         catalogStore.items.first(where: { $0.id == id })
     }
 
+    private func normalizeStoredModelSelections() {
+        if let id = currentChatModelId, findItem(id: id) == nil {
+            currentChatModelId = nil
+            defaults.removeObject(forKey: PreferenceKey.activeChatModelId)
+        }
+        if let id = currentEmbeddingModelId, findItem(id: id) == nil {
+            currentEmbeddingModelId = nil
+            defaults.removeObject(forKey: PreferenceKey.activeEmbeddingModelId)
+        }
+        if let id = currentOCRModelId, findItem(id: id) == nil {
+            currentOCRModelId = nil
+            defaults.removeObject(forKey: PreferenceKey.activeOCRModelId)
+            useModelOCRForImports = false
+        }
+    }
+
     private func ensureEmbeddingModelLoadedForRAG() async -> Bool {
         if isEmbeddingModelLoaded {
             return true
@@ -1099,10 +1116,54 @@ class GlobalViewModel {
         }
     }
 
+    private func disableModelOCRFallbackStatus(modelName: String? = nil) async {
+        if isOCRModelLoaded || isOCRModelLoading {
+            await unloadOCRModelAsync(clearSelection: false)
+        }
+        currentOCRModelId = nil
+        defaults.removeObject(forKey: PreferenceKey.activeOCRModelId)
+        useModelOCRForImports = false
+
+        let resolvedName = modelName?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let resolvedName, !resolvedName.isEmpty {
+            knowledgeImportStatus = "\(resolvedName) could not be loaded. Switched OCR backend to Apple Vision."
+        } else {
+            knowledgeImportStatus = "Selected OCR/VL model is not ready. Switched OCR backend to Apple Vision."
+        }
+    }
+
+    private func tryAutoRecoverOCRModel(excluding excludedId: String? = nil) async -> Bool {
+        let candidates = (catalogStore.items(kind: .ocr) + catalogStore.items(kind: .vl))
+            .filter { $0.id != excludedId && modelPathIfInstalled($0) != nil }
+            .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+
+        for candidate in candidates {
+            await loadOCRModelAsync(item: candidate, persistSelection: true)
+            if isOCRModelLoaded {
+                touchOCRUsage()
+                knowledgeImportStatus = "Switched OCR model to \(candidate.name)."
+                return true
+            }
+        }
+
+        return false
+    }
+
     private func prepareOCRModelForTask() async -> (enabled: Bool, loadedTemporarily: Bool) {
         guard let id = currentOCRModelId,
-              let item = findItem(id: id),
-              modelPathIfInstalled(item) != nil else {
+              let item = findItem(id: id) else {
+            if await tryAutoRecoverOCRModel() {
+                return (true, true)
+            }
+            await disableModelOCRFallbackStatus()
+            return (false, false)
+        }
+
+        guard modelPathIfInstalled(item) != nil else {
+            if await tryAutoRecoverOCRModel(excluding: item.id) {
+                return (true, true)
+            }
+            await disableModelOCRFallbackStatus(modelName: item.name)
             return (false, false)
         }
 
@@ -1117,6 +1178,11 @@ class GlobalViewModel {
             return (true, true)
         }
 
+        if await tryAutoRecoverOCRModel(excluding: item.id) {
+            return (true, true)
+        }
+
+        await disableModelOCRFallbackStatus(modelName: item.name)
         return (false, false)
     }
 
