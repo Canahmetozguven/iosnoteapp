@@ -1,10 +1,10 @@
 import Foundation
 
-typealias Note = SchemaV4.Note
-typealias ChatMessage = SchemaV4.ChatMessage
-typealias ChatSession = SchemaV4.ChatSession
-typealias KnowledgeDocument = SchemaV4.KnowledgeDocument
-typealias KnowledgeChunk = SchemaV4.KnowledgeChunk
+typealias Note = SchemaV5.Note
+typealias ChatMessage = SchemaV5.ChatMessage
+typealias ChatSession = SchemaV5.ChatSession
+typealias KnowledgeDocument = SchemaV5.KnowledgeDocument
+typealias KnowledgeChunk = SchemaV5.KnowledgeChunk
 
 extension Note: Hashable {
     static func == (lhs: Note, rhs: Note) -> Bool {

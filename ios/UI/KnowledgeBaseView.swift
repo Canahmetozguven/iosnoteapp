@@ -268,7 +268,7 @@ private struct KnowledgeDocumentDetailView: View {
                 } else {
                     ForEach(chunks, id: \.id) { chunk in
                         VStack(alignment: .leading, spacing: 6) {
-                            Text("Chunk \(chunk.chunkIndex + 1)")
+                            Text(chunk.pageNumber.map { "Page \($0) • Chunk \(chunk.chunkIndex + 1)" } ?? "Chunk \(chunk.chunkIndex + 1)")
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                             Text(chunk.text)

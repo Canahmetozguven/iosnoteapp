@@ -54,6 +54,33 @@ struct ChatView: View {
                 .transition(.move(edge: .top).combined(with: .opacity))
             }
 
+            if let indexingText = indexingIndicatorText {
+                HStack(spacing: 8) {
+                    ProgressView(value: indexingProgressValue)
+                        .progressViewStyle(.linear)
+                        .frame(width: 80)
+                    Text(indexingText)
+                        .font(.caption2.weight(.medium))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .background(
+                    Capsule()
+                        .fill(Color(.secondarySystemBackground).opacity(0.92))
+                        .overlay(
+                            Capsule()
+                                .stroke(Color.white.opacity(0.4), lineWidth: 0.6)
+                        )
+                )
+                .padding(.horizontal, 10)
+                .padding(.top, 6)
+                .padding(.bottom, 2)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .transition(.opacity)
+            }
+
             if !vm.isChatModelLoaded {
                 unloadedModelState
             } else {
@@ -143,6 +170,27 @@ struct ChatView: View {
             return true
         }
         return false
+    }
+
+    private var indexingProgressValue: Double? {
+        let value = max(0, min(1, vm.indexingProgress))
+        return (value > 0 && value < 1) ? value : nil
+    }
+
+    private var indexingIndicatorText: String? {
+        let progress = max(0, min(1, vm.indexingProgress))
+        let percentText = progress > 0 && progress < 1 ? "\(Int(progress * 100))%" : nil
+        let status = vm.indexingStatus?.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let status, !status.isEmpty {
+            if let percentText {
+                return "Indexing knowledge base (\(percentText))..."
+            }
+            return status
+        }
+        if let percentText {
+            return "Indexing knowledge base (\(percentText))..."
+        }
+        return nil
     }
 
     private var noContextActions: some View {
@@ -350,11 +398,10 @@ struct ChatView: View {
                 case .note:
                     subtitle = "Note"
                 case .knowledgeChunk:
-                    if let index = citation.chunkIndex {
-                        subtitle = "Knowledge chunk \(index)"
-                    } else {
-                        subtitle = "Knowledge"
-                    }
+                    let chunkText = citation.chunkIndex.map { "Chunk \($0)" }
+                    let pageText = citation.pageNumber.map { "Page \($0)" }
+                    let parts = [pageText, chunkText].compactMap { $0 }
+                    subtitle = parts.isEmpty ? "Knowledge" : parts.joined(separator: " • ")
                 }
                 return SourcePreview(
                     id: citation.id,
@@ -393,7 +440,7 @@ struct ChatView: View {
                     id: "chunk-\(id.uuidString)",
                     citationId: nil,
                     title: resolved,
-                    subtitle: "Chunk \(chunk.chunkIndex + 1)",
+                    subtitle: chunk.pageNumber.map { "Page \($0) • Chunk \(chunk.chunkIndex + 1)" } ?? "Chunk \(chunk.chunkIndex + 1)",
                     snippet: String(chunk.text.prefix(220)).trimmingCharacters(in: .whitespacesAndNewlines)
                 )
             )

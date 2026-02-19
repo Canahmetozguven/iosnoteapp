@@ -82,6 +82,7 @@ final class BackupImporter {
                 modelContext.insert(KnowledgeChunk(
                     id: c.id,
                     chunkIndex: c.chunkIndex,
+                    pageNumber: c.pageNumber,
                     text: c.text,
                     embedding: c.embedding,
                     embeddingModelId: c.embeddingModelId,

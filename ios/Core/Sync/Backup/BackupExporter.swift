@@ -20,7 +20,7 @@ final class BackupExporter {
         let messages = try modelContext.fetch(FetchDescriptor<ChatMessage>())
 
         let payload = ExportPayloadV1(
-            version: 4,
+            version: 5,
             exportedAt: Date(),
             notes: notes.map { n in
                 ExportNoteV1(
@@ -59,6 +59,7 @@ final class BackupExporter {
                     id: c.id,
                     documentId: c.document?.id,
                     chunkIndex: c.chunkIndex,
+                    pageNumber: c.pageNumber,
                     text: c.text,
                     embedding: c.embedding,
                     embeddingModelId: c.embeddingModelId,
@@ -95,7 +96,7 @@ final class BackupExporter {
         )
 
         let manifest = ExportManifestV1(
-            version: 4,
+            version: 5,
             createdAt: Date(),
             noteCount: notes.count,
             knowledgeDocumentCount: documents.count,

@@ -24,6 +24,7 @@ final class RAGPipelineServiceTests: XCTestCase {
         )
         let relevantChunk = KnowledgeChunk(
             chunkIndex: 0,
+            pageNumber: 3,
             text: "Grounding improves reliability when the assistant cites evidence.",
             embedding: [0.97, 0.02],
             document: document
@@ -40,6 +41,7 @@ final class RAGPipelineServiceTests: XCTestCase {
         XCTAssertGreaterThan(result.selectedCount, 0)
         XCTAssertFalse(result.citations.isEmpty)
         XCTAssertEqual(result.citations.first?.id, "S1")
+        XCTAssertEqual(result.citations.first(where: { $0.sourceType == .knowledgeChunk })?.pageNumber, 3)
         XCTAssertNotEqual(result.confidence, .none)
     }
 

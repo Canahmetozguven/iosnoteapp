@@ -53,6 +53,9 @@ class GlobalViewModel {
         static let strictGroundingMode = "strict_grounding_mode"
         static let ragNoteBoosts = "rag_note_boosts"
         static let ragChunkBoosts = "rag_chunk_boosts"
+        static let indexingProgress = "indexing_progress"
+        static let indexingStatus = "indexing_status"
+        static let indexingUpdatedAt = "indexing_updated_at"
     }
 
     private enum SessionDefaults {
@@ -162,8 +165,12 @@ class GlobalViewModel {
     }
 
     // Progress for indexing (0.0 to 1.0)
-    var indexingProgress: Double = 0.0
-    var indexingStatus: String? = nil
+    var indexingProgress: Double = 0.0 {
+        didSet { persistIndexingState() }
+    }
+    var indexingStatus: String? = nil {
+        didSet { persistIndexingState() }
+    }
 
     private var hasBootstrappedData = false
     private var isModelRehydrateInProgress = false
@@ -207,6 +214,7 @@ class GlobalViewModel {
         strictGroundingMode = defaults.bool(forKey: PreferenceKey.strictGroundingMode)
         noteFeedbackBoosts = loadBoostMap(forKey: PreferenceKey.ragNoteBoosts)
         chunkFeedbackBoosts = loadBoostMap(forKey: PreferenceKey.ragChunkBoosts)
+        restoreIndexingState()
         normalizeStoredModelSelections()
     }
 
@@ -490,17 +498,27 @@ class GlobalViewModel {
                 }
                 self.generationStage = .rankingSources
 
-                let retrieval = self.ragPipelineService.retrieveContext(
-                    queryText: userMessageText,
-                    queryEmbedding: queryEmbedding,
-                    notes: notes,
-                    chunks: knowledgeChunks,
-                    noteBoosts: self.noteFeedbackBoosts,
-                    chunkBoosts: self.chunkFeedbackBoosts,
-                    semanticNoteIds: Set(eligibleNotes.map(\.id)),
-                    semanticChunkIds: Set(eligibleChunks.map(\.id)),
-                    profile: retrievalProfile
-                )
+                let semanticNoteIds = Set(eligibleNotes.map(\.id))
+                let semanticChunkIds = Set(eligibleChunks.map(\.id))
+                let noteBoosts = self.noteFeedbackBoosts
+                let chunkBoosts = self.chunkFeedbackBoosts
+                let pipeline = self.ragPipelineService
+                let retrieval = await withCheckedContinuation { continuation in
+                    DispatchQueue.global(qos: .userInitiated).async {
+                        let result = pipeline.retrieveContext(
+                            queryText: userMessageText,
+                            queryEmbedding: queryEmbedding,
+                            notes: notes,
+                            chunks: knowledgeChunks,
+                            noteBoosts: noteBoosts,
+                            chunkBoosts: chunkBoosts,
+                            semanticNoteIds: semanticNoteIds,
+                            semanticChunkIds: semanticChunkIds,
+                            profile: retrievalProfile
+                        )
+                        continuation.resume(returning: result)
+                    }
+                }
                 ragNoteContext = retrieval.selectedNotes
                 ragChunkContext = retrieval.selectedChunks
                 ragCitations = retrieval.citations
@@ -981,8 +999,9 @@ class GlobalViewModel {
                 case .note:
                     return "- [\(citation.id)] [Note: \(citation.title)] \(citation.snippet)"
                 case .knowledgeChunk:
-                    let indexText = citation.chunkIndex.map { " / chunk \($0)" } ?? ""
-                    return "- [\(citation.id)] [KB: \(citation.title)\(indexText)] \(citation.snippet)"
+                    let chunkText = citation.chunkIndex.map { " / chunk \($0)" } ?? ""
+                    let pageText = citation.pageNumber.map { " / page \($0)" } ?? ""
+                    return "- [\(citation.id)] [KB: \(citation.title)\(pageText)\(chunkText)] \(citation.snippet)"
                 }
             }.joined(separator: "\n")
         }
@@ -997,6 +1016,7 @@ class GlobalViewModel {
                     sourceType: .note,
                     title: title,
                     chunkIndex: nil,
+                    pageNumber: nil,
                     noteId: note.id,
                     chunkId: nil,
                     snippet: snippet
@@ -1014,6 +1034,7 @@ class GlobalViewModel {
                     sourceType: .knowledgeChunk,
                     title: title,
                     chunkIndex: chunk.chunkIndex + 1,
+                    pageNumber: chunk.pageNumber,
                     noteId: nil,
                     chunkId: chunk.id,
                     snippet: snippet
@@ -1026,8 +1047,9 @@ class GlobalViewModel {
             case .note:
                 return "- [\(citation.id)] [Note: \(citation.title)] \(citation.snippet)"
             case .knowledgeChunk:
-                let indexText = citation.chunkIndex.map { " / chunk \($0)" } ?? ""
-                return "- [\(citation.id)] [KB: \(citation.title)\(indexText)] \(citation.snippet)"
+                let chunkText = citation.chunkIndex.map { " / chunk \($0)" } ?? ""
+                let pageText = citation.pageNumber.map { " / page \($0)" } ?? ""
+                return "- [\(citation.id)] [KB: \(citation.title)\(pageText)\(chunkText)] \(citation.snippet)"
             }
         }.joined(separator: "\n")
     }
@@ -1468,6 +1490,40 @@ class GlobalViewModel {
         max(-0.2, min(0.2, value))
     }
 
+    private func restoreIndexingState() {
+        guard let updatedAt = defaults.object(forKey: PreferenceKey.indexingUpdatedAt) as? Date else {
+            return
+        }
+        // Drop stale progress indicators after app has been away for a while.
+        if Date().timeIntervalSince(updatedAt) > 15 * 60 {
+            defaults.removeObject(forKey: PreferenceKey.indexingProgress)
+            defaults.removeObject(forKey: PreferenceKey.indexingStatus)
+            defaults.removeObject(forKey: PreferenceKey.indexingUpdatedAt)
+            return
+        }
+
+        let savedProgress = defaults.double(forKey: PreferenceKey.indexingProgress)
+        let savedStatus = defaults.string(forKey: PreferenceKey.indexingStatus)
+        indexingProgress = max(0, min(1, savedProgress))
+        indexingStatus = savedStatus
+    }
+
+    private func persistIndexingState() {
+        let clampedProgress = max(0, min(1, indexingProgress))
+        let hasActiveProgress = clampedProgress > 0 && clampedProgress < 1
+        let hasStatus = !(indexingStatus?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? true)
+
+        if hasActiveProgress || hasStatus {
+            defaults.set(clampedProgress, forKey: PreferenceKey.indexingProgress)
+            defaults.set(indexingStatus, forKey: PreferenceKey.indexingStatus)
+            defaults.set(Date(), forKey: PreferenceKey.indexingUpdatedAt)
+        } else {
+            defaults.removeObject(forKey: PreferenceKey.indexingProgress)
+            defaults.removeObject(forKey: PreferenceKey.indexingStatus)
+            defaults.removeObject(forKey: PreferenceKey.indexingUpdatedAt)
+        }
+    }
+
     private func knowledgeChunkContentHash(_ chunk: KnowledgeChunk) -> String {
         let digest = SHA256.hash(data: Data(chunk.text.utf8))
         return digest.map { String(format: "%02x", $0) }.joined()
@@ -1864,13 +1920,14 @@ extension GlobalViewModel {
         )
         modelContext.insert(document)
 
-        for (index, text) in ingested.chunks.enumerated() {
+        for (index, chunkData) in ingested.chunks.enumerated() {
             let chunk = KnowledgeChunk(
                 chunkIndex: index,
-                text: text,
-                tokenCount: tokenCountEstimate(text),
-                charCount: text.count,
-                sectionHint: inferSectionHint(from: text),
+                pageNumber: chunkData.pageNumber,
+                text: chunkData.text,
+                tokenCount: tokenCountEstimate(chunkData.text),
+                charCount: chunkData.text.count,
+                sectionHint: inferSectionHint(from: chunkData.text),
                 documentTitleNormalized: normalizedForSearch(document.title),
                 createdAt: Date(),
                 updatedAt: Date(),

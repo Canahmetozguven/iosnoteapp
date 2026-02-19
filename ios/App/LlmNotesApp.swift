@@ -37,11 +37,11 @@ struct LlmNotesApp: App {
 
     private static func makeSchema() -> Schema {
         Schema([
-            SchemaV4.Note.self,
-            SchemaV4.ChatSession.self,
-            SchemaV4.ChatMessage.self,
-            SchemaV4.KnowledgeDocument.self,
-            SchemaV4.KnowledgeChunk.self
+            SchemaV5.Note.self,
+            SchemaV5.ChatSession.self,
+            SchemaV5.ChatMessage.self,
+            SchemaV5.KnowledgeDocument.self,
+            SchemaV5.KnowledgeChunk.self
         ])
     }
 

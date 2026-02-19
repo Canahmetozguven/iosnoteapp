@@ -1,6 +1,11 @@
 import Foundation
 import CryptoKit
 
+struct IngestedKnowledgeChunk {
+    var text: String
+    var pageNumber: Int?
+}
+
 struct IngestedKnowledgeDocument {
     var title: String
     var mimeType: String
@@ -8,7 +13,7 @@ struct IngestedKnowledgeDocument {
     var sourceType: KnowledgeSourceType
     var driveFileId: String?
     var extractionResult: DocumentExtractionResult
-    var chunks: [String]
+    var chunks: [IngestedKnowledgeChunk]
     var contentHash: String
 }
 
@@ -31,11 +36,15 @@ final class KnowledgeIngestionService {
             llamaContext: llamaContext,
             preferOCRModel: preferOCRModel
         )
-        let chunks: [String]
+        let chunks: [IngestedKnowledgeChunk]
         if let pages = extraction.pages, !pages.isEmpty {
-            chunks = chunking.chunkPages(pages, chunkSize: 800, overlap: 120)
+            chunks = chunking.chunkPagesWithMetadata(pages, chunkSize: 800, overlap: 120).map {
+                IngestedKnowledgeChunk(text: $0.text, pageNumber: $0.pageNumber)
+            }
         } else {
-            chunks = chunking.chunk(text: extraction.text, chunkSize: 800, overlap: 120)
+            chunks = chunking.chunkWithMetadata(text: extraction.text, chunkSize: 800, overlap: 120).map {
+                IngestedKnowledgeChunk(text: $0.text, pageNumber: $0.pageNumber)
+            }
         }
         let hash = sha256(extraction.text)
 
@@ -64,11 +73,15 @@ final class KnowledgeIngestionService {
             llamaContext: llamaContext,
             preferOCRModel: preferOCRModel
         )
-        let chunks: [String]
+        let chunks: [IngestedKnowledgeChunk]
         if let pages = extraction.pages, !pages.isEmpty {
-            chunks = chunking.chunkPages(pages, chunkSize: 800, overlap: 120)
+            chunks = chunking.chunkPagesWithMetadata(pages, chunkSize: 800, overlap: 120).map {
+                IngestedKnowledgeChunk(text: $0.text, pageNumber: $0.pageNumber)
+            }
         } else {
-            chunks = chunking.chunk(text: extraction.text, chunkSize: 800, overlap: 120)
+            chunks = chunking.chunkWithMetadata(text: extraction.text, chunkSize: 800, overlap: 120).map {
+                IngestedKnowledgeChunk(text: $0.text, pageNumber: $0.pageNumber)
+            }
         }
         let hash = sha256(extraction.text)
 

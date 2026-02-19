@@ -62,6 +62,7 @@ struct ExportKnowledgeChunkV1: Codable {
     var id: UUID
     var documentId: UUID?
     var chunkIndex: Int
+    var pageNumber: Int?
     var text: String
     var embedding: [Float]?
     var embeddingModelId: String?

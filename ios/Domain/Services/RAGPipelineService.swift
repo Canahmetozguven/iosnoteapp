@@ -63,6 +63,8 @@ enum RAGRetrievalProfile: String, CaseIterable, Codable, Identifiable {
         }
     }
 
+    fileprivate var minimumSemanticScore: Float { 0.65 }
+
     fileprivate var maxChunksPerDocument: Int {
         switch self {
         case .fastRecommended: return 1
@@ -98,6 +100,7 @@ struct CitationRef: Hashable, Codable {
     var sourceType: SourceType
     var title: String
     var chunkIndex: Int?
+    var pageNumber: Int?
     var noteId: UUID?
     var chunkId: UUID?
     var snippet: String
@@ -141,6 +144,7 @@ final class RAGPipelineService {
     }
 
     private let vectorSearchService = VectorSearchService()
+    private let scoringBatchSize = 500
     private let stopWords: Set<String> = [
         "a", "an", "and", "are", "as", "at", "be", "but", "by", "for", "from",
         "how", "i", "in", "is", "it", "me", "my", "of", "on", "or", "our", "that",
@@ -164,80 +168,19 @@ final class RAGPipelineService {
 
         let queryTokens = tokenize(query)
         let normalizedQuery = normalizeText(query)
-        var candidates: [ScoredCandidate] = []
-        candidates.reserveCapacity(notes.count + chunks.count)
         let embeddingEnabled = (queryEmbedding?.isEmpty == false)
-
-        for note in notes {
-            let semantic = semanticScore(
-                for: note,
-                queryEmbedding: queryEmbedding,
-                semanticNoteIds: semanticNoteIds
-            )
-            let lexical = lexicalScore(
-                queryTokens: queryTokens,
-                normalizedQuery: normalizedQuery,
-                title: note.title,
-                body: note.content
-            )
-            guard let fused = fusedScore(
-                semantic: semantic,
-                lexical: lexical,
-                profile: profile
-            ) else { continue }
-            let adjustedScore = adjustedFusedScore(fused, boost: noteBoosts[note.id] ?? 0)
-
-            let fingerprint = fingerprintKey(
-                sourceTitle: note.title,
-                sourceText: note.content
-            )
-            candidates.append(
-                ScoredCandidate(
-                    source: .note(note),
-                    fusedScore: adjustedScore,
-                    lexicalScore: lexical,
-                    usedSemantic: semantic != nil,
-                    fingerprint: fingerprint,
-                    documentId: nil
-                )
-            )
-        }
-
-        for chunk in chunks {
-            let semantic = semanticScore(
-                for: chunk,
-                queryEmbedding: queryEmbedding,
-                semanticChunkIds: semanticChunkIds
-            )
-            let title = chunk.document?.title ?? ""
-            let lexical = lexicalScore(
-                queryTokens: queryTokens,
-                normalizedQuery: normalizedQuery,
-                title: title,
-                body: chunk.text
-            )
-            guard let fused = fusedScore(
-                semantic: semantic,
-                lexical: lexical,
-                profile: profile
-            ) else { continue }
-            let adjustedScore = adjustedFusedScore(fused, boost: chunkBoosts[chunk.id] ?? 0)
-
-            let fingerprint = fingerprintKey(
-                sourceTitle: title,
-                sourceText: chunk.text
-            )
-            candidates.append(
-                ScoredCandidate(
-                    source: .chunk(chunk),
-                    fusedScore: adjustedScore,
-                    lexicalScore: lexical,
-                    usedSemantic: semantic != nil,
-                    fingerprint: fingerprint,
-                    documentId: chunk.document?.id
-                )
-            )
-        }
+        let candidates = scoreCandidates(
+            queryEmbedding: queryEmbedding,
+            queryTokens: queryTokens,
+            normalizedQuery: normalizedQuery,
+            notes: notes,
+            chunks: chunks,
+            noteBoosts: noteBoosts,
+            chunkBoosts: chunkBoosts,
+            semanticNoteIds: semanticNoteIds,
+            semanticChunkIds: semanticChunkIds,
+            profile: profile
+        )
 
         guard !candidates.isEmpty else {
             return .empty
@@ -293,6 +236,7 @@ final class RAGPipelineService {
                         sourceType: .note,
                         title: title,
                         chunkIndex: nil,
+                        pageNumber: nil,
                         noteId: note.id,
                         chunkId: nil,
                         snippet: snippet
@@ -310,6 +254,7 @@ final class RAGPipelineService {
                         sourceType: .knowledgeChunk,
                         title: title,
                         chunkIndex: chunk.chunkIndex + 1,
+                        pageNumber: chunk.pageNumber,
                         noteId: nil,
                         chunkId: chunk.id,
                         snippet: snippet
@@ -366,10 +311,191 @@ final class RAGPipelineService {
         profile: RAGRetrievalProfile
     ) -> Float? {
         if let semantic {
+            if semantic < profile.minimumSemanticScore && lexical <= 0 {
+                return nil
+            }
             return max(0, (semantic * profile.semanticWeight) + (lexical * profile.lexicalWeight))
         }
         guard lexical > 0 else { return nil }
         return lexical * 0.65
+    }
+
+    private func scoreCandidates(
+        queryEmbedding: [Float]?,
+        queryTokens: Set<String>,
+        normalizedQuery: String,
+        notes: [Note],
+        chunks: [KnowledgeChunk],
+        noteBoosts: [UUID: Float],
+        chunkBoosts: [UUID: Float],
+        semanticNoteIds: Set<UUID>,
+        semanticChunkIds: Set<UUID>,
+        profile: RAGRetrievalProfile
+    ) -> [ScoredCandidate] {
+        var candidates: [ScoredCandidate] = []
+        candidates.reserveCapacity(min(notes.count + chunks.count, profile.maxCandidates * 8))
+
+        for start in stride(from: 0, to: notes.count, by: scoringBatchSize) {
+            let end = min(notes.count, start + scoringBatchSize)
+            let batch = Array(notes[start..<end])
+            candidates.append(
+                contentsOf: scoreNoteBatch(
+                    batch,
+                    queryEmbedding: queryEmbedding,
+                    queryTokens: queryTokens,
+                    normalizedQuery: normalizedQuery,
+                    noteBoosts: noteBoosts,
+                    semanticNoteIds: semanticNoteIds,
+                    profile: profile
+                )
+            )
+        }
+
+        for start in stride(from: 0, to: chunks.count, by: scoringBatchSize) {
+            let end = min(chunks.count, start + scoringBatchSize)
+            let batch = Array(chunks[start..<end])
+            candidates.append(
+                contentsOf: scoreChunkBatch(
+                    batch,
+                    queryEmbedding: queryEmbedding,
+                    queryTokens: queryTokens,
+                    normalizedQuery: normalizedQuery,
+                    chunkBoosts: chunkBoosts,
+                    semanticChunkIds: semanticChunkIds,
+                    profile: profile
+                )
+            )
+        }
+
+        return candidates
+    }
+
+    private func scoreNoteBatch(
+        _ batch: [Note],
+        queryEmbedding: [Float]?,
+        queryTokens: Set<String>,
+        normalizedQuery: String,
+        noteBoosts: [UUID: Float],
+        semanticNoteIds: Set<UUID>,
+        profile: RAGRetrievalProfile
+    ) -> [ScoredCandidate] {
+        parallelScoreBatch(batch.count) { index in
+            let note = batch[index]
+            let semantic = semanticScore(
+                for: note,
+                queryEmbedding: queryEmbedding,
+                semanticNoteIds: semanticNoteIds
+            )
+            let lexical = lexicalScore(
+                queryTokens: queryTokens,
+                normalizedQuery: normalizedQuery,
+                title: note.title,
+                body: note.content
+            )
+            guard let fused = fusedScore(
+                semantic: semantic,
+                lexical: lexical,
+                profile: profile
+            ) else { return nil }
+
+            let adjustedScore = adjustedFusedScore(fused, boost: noteBoosts[note.id] ?? 0)
+            let fingerprint = fingerprintKey(
+                sourceTitle: note.title,
+                sourceText: note.content
+            )
+            return ScoredCandidate(
+                source: .note(note),
+                fusedScore: adjustedScore,
+                lexicalScore: lexical,
+                usedSemantic: semantic != nil,
+                fingerprint: fingerprint,
+                documentId: nil
+            )
+        }
+    }
+
+    private func scoreChunkBatch(
+        _ batch: [KnowledgeChunk],
+        queryEmbedding: [Float]?,
+        queryTokens: Set<String>,
+        normalizedQuery: String,
+        chunkBoosts: [UUID: Float],
+        semanticChunkIds: Set<UUID>,
+        profile: RAGRetrievalProfile
+    ) -> [ScoredCandidate] {
+        parallelScoreBatch(batch.count) { index in
+            let chunk = batch[index]
+            let semantic = semanticScore(
+                for: chunk,
+                queryEmbedding: queryEmbedding,
+                semanticChunkIds: semanticChunkIds
+            )
+            let title = chunk.document?.title ?? ""
+            let lexical = lexicalScore(
+                queryTokens: queryTokens,
+                normalizedQuery: normalizedQuery,
+                title: title,
+                body: chunk.text
+            )
+            guard let fused = fusedScore(
+                semantic: semantic,
+                lexical: lexical,
+                profile: profile
+            ) else { return nil }
+
+            let adjustedScore = adjustedFusedScore(fused, boost: chunkBoosts[chunk.id] ?? 0)
+            let fingerprint = fingerprintKey(
+                sourceTitle: title,
+                sourceText: chunk.text
+            )
+            return ScoredCandidate(
+                source: .chunk(chunk),
+                fusedScore: adjustedScore,
+                lexicalScore: lexical,
+                usedSemantic: semantic != nil,
+                fingerprint: fingerprint,
+                documentId: chunk.document?.id
+            )
+        }
+    }
+
+    private func parallelScoreBatch(
+        _ count: Int,
+        scorer: (Int) -> ScoredCandidate?
+    ) -> [ScoredCandidate] {
+        guard count > 0 else { return [] }
+
+        let cpuCount = max(1, ProcessInfo.processInfo.processorCount)
+        let workerCount = min(cpuCount, count)
+        guard workerCount > 1 else {
+            return (0..<count).compactMap(scorer)
+        }
+
+        let bucketSize = (count + workerCount - 1) / workerCount
+        let lock = NSLock()
+        var merged: [ScoredCandidate] = []
+        merged.reserveCapacity(count)
+
+        DispatchQueue.concurrentPerform(iterations: workerCount) { worker in
+            let start = worker * bucketSize
+            guard start < count else { return }
+            let end = min(count, start + bucketSize)
+
+            var local: [ScoredCandidate] = []
+            local.reserveCapacity(end - start)
+            for index in start..<end {
+                if let candidate = scorer(index) {
+                    local.append(candidate)
+                }
+            }
+
+            guard !local.isEmpty else { return }
+            lock.lock()
+            merged.append(contentsOf: local)
+            lock.unlock()
+        }
+
+        return merged
     }
 
     private func lexicalScore(

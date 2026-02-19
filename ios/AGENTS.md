@@ -24,7 +24,7 @@ Modular Clean Architecture targeting iOS 17+. Optimized for local LLM execution 
     - Default: Metal (GPU) acceleration.
     - Fallback: Low Power Mode restricts context size and uses CPU-only if necessary.
 - **Parsing**: LLM outputs containing `<think>...</think>` tags must be parsed to separate reasoning from final response.
-- **RAG Implementation**: MVP uses linear cosine similarity scan over local embeddings.
+- **RAG Implementation**: Hybrid lexical + embedding retrieval with batched parallel scoring over local embeddings.
 - **UI Patterns**: View-State-Action (VSA). Keep views lean; move logic to `@Observable` view models.
 
 ## Key Entry Points
