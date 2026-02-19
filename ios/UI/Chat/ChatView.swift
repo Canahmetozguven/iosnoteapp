@@ -39,8 +39,19 @@ struct ChatView: View {
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 14)
-                .padding(.vertical, 8)
-                .background(Color(.secondarySystemBackground).opacity(0.9))
+                .padding(.vertical, 10)
+                .background(
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .fill(Color(.secondarySystemBackground).opacity(0.92))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                .stroke(Color.white.opacity(0.45), lineWidth: 0.6)
+                        )
+                )
+                .padding(.horizontal, 10)
+                .padding(.top, 8)
+                .padding(.bottom, 2)
+                .transition(.move(edge: .top).combined(with: .opacity))
             }
 
             if !vm.isChatModelLoaded {
@@ -64,6 +75,8 @@ struct ChatView: View {
         }
         .navigationTitle(vm.activeSession()?.title ?? "Chat")
         .navigationBarTitleDisplayMode(.inline)
+        .animation(.easeInOut(duration: 0.2), value: vm.generationStage?.rawValue ?? "")
+        .animation(.easeInOut(duration: 0.2), value: vm.ragStatusText() ?? "")
         .toolbar {
             ToolbarItem(placement: .topBarLeading) {
                 Button {
@@ -137,7 +150,8 @@ struct ChatView: View {
             Button("Add Source") {
                 selectedTabRaw = 2
             }
-            .buttonStyle(.bordered)
+            .buttonStyle(.borderedProminent)
+            .tint(AppTheme.primary)
             .controlSize(.small)
 
             Menu("More") {
@@ -172,7 +186,7 @@ struct ChatView: View {
     private var messagesArea: some View {
         ScrollViewReader { proxy in
             ScrollView {
-                LazyVStack(spacing: 12) {
+                LazyVStack(spacing: 14) {
                     ForEach(vm.chatMessages, id: \.id) { msg in
                         MessageBubble(
                             message: msg,
@@ -200,8 +214,8 @@ struct ChatView: View {
                     }
                 }
                 .padding(.horizontal, 12)
-                .padding(.top, 10)
-                .padding(.bottom, 4)
+                .padding(.top, 12)
+                .padding(.bottom, 8)
             }
             .scrollDismissesKeyboard(.interactively)
             .contentShape(Rectangle())
@@ -274,7 +288,19 @@ struct ChatView: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
-        .background(AppTheme.card.opacity(0.95))
+        .background(
+            LinearGradient(
+                colors: [AppTheme.card.opacity(0.96), AppTheme.cardElevated.opacity(0.96)],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+        )
+        .overlay(alignment: .top) {
+            Rectangle()
+                .fill(Color.white.opacity(0.08))
+                .frame(height: 0.6)
+        }
+        .shadow(color: AppTheme.subtleShadow, radius: 10, x: 0, y: -2)
     }
 
     private func sendMessage() {
@@ -486,6 +512,7 @@ private struct WhyAnswerSheet: View {
                     }
                 }
             }
+            .listStyle(.insetGrouped)
             .navigationTitle("Why This Answer")
             .navigationBarTitleDisplayMode(.inline)
         }
@@ -497,21 +524,40 @@ private struct SourcePreviewSheet: View {
 
     var body: some View {
         NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 12) {
-                    Text(preview.title)
-                        .font(.headline)
-                    if let subtitle = preview.subtitle {
-                        Text(subtitle)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
+            ZStack {
+                LinearGradient(
+                    colors: [Color(.systemGroupedBackground), Color(.secondarySystemGroupedBackground)],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+                .ignoresSafeArea()
+
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text(preview.title)
+                            .font(.headline)
+                        if let subtitle = preview.subtitle {
+                            Text(subtitle)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        Text(preview.snippet)
+                            .font(.body)
+                            .lineSpacing(2)
+                            .textSelection(.enabled)
                     }
-                    Text(preview.snippet)
-                        .font(.body)
-                        .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(16)
+                    .background(
+                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            .fill(Color(.tertiarySystemBackground))
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            .stroke(Color.white.opacity(0.6), lineWidth: 0.6)
+                    )
+                    .padding(14)
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(16)
             }
             .navigationTitle(preview.citationId ?? "Source")
             .navigationBarTitleDisplayMode(.inline)

@@ -24,7 +24,7 @@ struct MessageBubble: View {
         HStack {
             if message.role == "user" { Spacer(minLength: 44) }
 
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: 10) {
                 if let thought = message.thoughtProcess?.trimmingCharacters(in: .whitespacesAndNewlines),
                    !thought.isEmpty {
                     DisclosureGroup("Thinking Process") {
@@ -40,12 +40,15 @@ struct MessageBubble: View {
                         ProgressView()
                             .scaleEffect(0.7)
                         Text(stageText ?? "Thinking...")
-                            .font(.caption)
-                            .foregroundStyle(.white.opacity(0.85))
+                            .font(.caption.weight(.medium))
+                            .foregroundStyle(.white.opacity(0.88))
+                            .contentTransition(.opacity)
                     }
                 } else {
                     Text(message.content)
                         .foregroundStyle(.white)
+                        .font(.body)
+                        .lineSpacing(2)
                         .textSelection(.enabled)
                 }
 
@@ -56,20 +59,35 @@ struct MessageBubble: View {
                                 Button(citation) {
                                     onCitationTap?(citation)
                                 }
-                                .buttonStyle(.borderedProminent)
-                                .tint(.white.opacity(0.16))
+                                .font(.caption2.weight(.semibold))
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 5)
+                                .background(AppTheme.chipFill)
+                                .foregroundStyle(.white)
+                                .overlay(
+                                    Capsule().stroke(AppTheme.chipStroke, lineWidth: 0.8)
+                                )
+                                .clipShape(Capsule())
                                 .controlSize(.small)
                             }
                             if inlineCitationIds.count > 2 {
                                 Button("+\(inlineCitationIds.count - 2)") {
                                     showingSources = true
                                 }
-                                .buttonStyle(.borderedProminent)
-                                .tint(.white.opacity(0.16))
+                                .font(.caption2.weight(.semibold))
+                                .padding(.horizontal, 10)
+                                .padding(.vertical, 5)
+                                .background(AppTheme.chipFill)
+                                .foregroundStyle(.white)
+                                .overlay(
+                                    Capsule().stroke(AppTheme.chipStroke, lineWidth: 0.8)
+                                )
+                                .clipShape(Capsule())
                                 .controlSize(.small)
                             }
                         }
                     }
+                    .transition(.opacity.combined(with: .move(edge: .bottom)))
                 }
 
                 if message.role == "assistant", !sourcePreviews.isEmpty {
@@ -88,7 +106,7 @@ struct MessageBubble: View {
                                                     .clipShape(Capsule())
                                             }
                                             Text(preview.title)
-                                                .font(.caption2.weight(.semibold))
+                                                .font(.caption2.weight(.bold))
                                                 .lineLimit(1)
                                         }
                                         if let subtitle = preview.subtitle, !subtitle.isEmpty {
@@ -104,13 +122,18 @@ struct MessageBubble: View {
                                     }
                                     .padding(8)
                                     .frame(width: 220, alignment: .leading)
-                                    .background(Color.white.opacity(0.08))
+                                    .background(Color.white.opacity(0.09))
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 10)
+                                            .stroke(Color.white.opacity(0.1), lineWidth: 0.6)
+                                    )
                                     .clipShape(RoundedRectangle(cornerRadius: 10))
                                 }
                             }
                         }
                     }
                     .tint(.white.opacity(0.85))
+                    .transition(.opacity.combined(with: .move(edge: .top)))
                 }
 
                 if message.role == "assistant", !message.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -119,8 +142,8 @@ struct MessageBubble: View {
                             Button("Why this answer?") {
                                 onWhyTapped()
                             }
-                            .buttonStyle(.bordered)
-                            .tint(.white.opacity(0.35))
+                            .buttonStyle(.borderedProminent)
+                            .tint(AppTheme.secondary.opacity(0.8))
                             .controlSize(.small)
                         }
                         if onRetryDeepSearch != nil || onFeedback != nil {
@@ -150,25 +173,37 @@ struct MessageBubble: View {
                                     .frame(width: 28, height: 28)
                             }
                             .buttonStyle(.bordered)
-                            .tint(.white.opacity(0.35))
+                            .tint(Color.white.opacity(0.4))
                             .controlSize(.small)
                         }
                     }
+                    .padding(.top, 2)
                 }
             }
-            .padding(12)
-            .background(backgroundColor)
-            .clipShape(RoundedRectangle(cornerRadius: 16))
-            .overlay(
-                RoundedRectangle(cornerRadius: 16)
-                    .stroke(Color.white.opacity(0.08), lineWidth: 1)
+            .padding(14)
+            .background(
+                LinearGradient(
+                    colors: backgroundGradient,
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
             )
+            .clipShape(RoundedRectangle(cornerRadius: 18, style: .continuous))
+            .overlay(
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .stroke(Color.white.opacity(0.1), lineWidth: 0.9)
+            )
+            .shadow(color: AppTheme.subtleShadow, radius: 6, x: 0, y: 3)
+            .animation(.spring(response: 0.28, dampingFraction: 0.86), value: showingSources)
 
             if message.role != "user" { Spacer(minLength: 44) }
         }
     }
 
-    private var backgroundColor: Color {
-        message.role == "user" ? AppTheme.bubbleUser : AppTheme.bubbleAi
+    private var backgroundGradient: [Color] {
+        if message.role == "user" {
+            return [AppTheme.bubbleUserTop, AppTheme.bubbleUser]
+        }
+        return [AppTheme.bubbleAiTop, AppTheme.bubbleAi]
     }
 }
