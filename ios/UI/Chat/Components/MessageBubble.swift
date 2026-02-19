@@ -18,6 +18,7 @@ struct MessageBubble: View {
     var onWhyTapped: (() -> Void)? = nil
     var onRetryDeepSearch: (() -> Void)? = nil
     var onFeedback: ((AssistantAnswerFeedback) -> Void)? = nil
+    @State private var showingSources = false
 
     var body: some View {
         HStack {
@@ -51,9 +52,17 @@ struct MessageBubble: View {
                 if message.role == "assistant", !inlineCitationIds.isEmpty {
                     ScrollView(.horizontal, showsIndicators: false) {
                         HStack(spacing: 6) {
-                            ForEach(inlineCitationIds, id: \.self) { citation in
+                            ForEach(Array(inlineCitationIds.prefix(2)), id: \.self) { citation in
                                 Button(citation) {
                                     onCitationTap?(citation)
+                                }
+                                .buttonStyle(.borderedProminent)
+                                .tint(.white.opacity(0.16))
+                                .controlSize(.small)
+                            }
+                            if inlineCitationIds.count > 2 {
+                                Button("+\(inlineCitationIds.count - 2)") {
+                                    showingSources = true
                                 }
                                 .buttonStyle(.borderedProminent)
                                 .tint(.white.opacity(0.16))
@@ -64,41 +73,44 @@ struct MessageBubble: View {
                 }
 
                 if message.role == "assistant", !sourcePreviews.isEmpty {
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 8) {
-                            ForEach(sourcePreviews.prefix(4)) { preview in
-                                VStack(alignment: .leading, spacing: 4) {
-                                    HStack(spacing: 4) {
-                                        if let citation = preview.citationId {
-                                            Text(citation)
-                                                .font(.caption2.weight(.bold))
-                                                .padding(.horizontal, 6)
-                                                .padding(.vertical, 2)
-                                                .background(Color.white.opacity(0.14))
-                                                .clipShape(Capsule())
+                    DisclosureGroup("Sources (\(sourcePreviews.count))", isExpanded: $showingSources) {
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack(spacing: 8) {
+                                ForEach(sourcePreviews.prefix(4)) { preview in
+                                    VStack(alignment: .leading, spacing: 4) {
+                                        HStack(spacing: 4) {
+                                            if let citation = preview.citationId {
+                                                Text(citation)
+                                                    .font(.caption2.weight(.bold))
+                                                    .padding(.horizontal, 6)
+                                                    .padding(.vertical, 2)
+                                                    .background(Color.white.opacity(0.14))
+                                                    .clipShape(Capsule())
+                                            }
+                                            Text(preview.title)
+                                                .font(.caption2.weight(.semibold))
+                                                .lineLimit(1)
                                         }
-                                        Text(preview.title)
-                                            .font(.caption2.weight(.semibold))
-                                            .lineLimit(1)
-                                    }
-                                    if let subtitle = preview.subtitle, !subtitle.isEmpty {
-                                        Text(subtitle)
+                                        if let subtitle = preview.subtitle, !subtitle.isEmpty {
+                                            Text(subtitle)
+                                                .font(.caption2)
+                                                .foregroundStyle(.white.opacity(0.75))
+                                                .lineLimit(1)
+                                        }
+                                        Text(preview.snippet)
                                             .font(.caption2)
-                                            .foregroundStyle(.white.opacity(0.75))
-                                            .lineLimit(1)
+                                            .foregroundStyle(.white.opacity(0.88))
+                                            .lineLimit(3)
                                     }
-                                    Text(preview.snippet)
-                                        .font(.caption2)
-                                        .foregroundStyle(.white.opacity(0.88))
-                                        .lineLimit(3)
+                                    .padding(8)
+                                    .frame(width: 220, alignment: .leading)
+                                    .background(Color.white.opacity(0.08))
+                                    .clipShape(RoundedRectangle(cornerRadius: 10))
                                 }
-                                .padding(8)
-                                .frame(width: 220, alignment: .leading)
-                                .background(Color.white.opacity(0.08))
-                                .clipShape(RoundedRectangle(cornerRadius: 10))
                             }
                         }
                     }
+                    .tint(.white.opacity(0.85))
                 }
 
                 if message.role == "assistant", !message.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -111,26 +123,35 @@ struct MessageBubble: View {
                             .tint(.white.opacity(0.35))
                             .controlSize(.small)
                         }
-                        if let onRetryDeepSearch {
-                            Button("Retry in Deep Search") {
-                                onRetryDeepSearch()
+                        if onRetryDeepSearch != nil || onFeedback != nil {
+                            Menu {
+                                if let onRetryDeepSearch {
+                                    Button("Retry in Deep Search") {
+                                        onRetryDeepSearch()
+                                    }
+                                }
+                                if let onFeedback {
+                                    Section("Rate This Answer") {
+                                        ForEach(AssistantAnswerFeedback.allCases, id: \.rawValue) { item in
+                                            Button {
+                                                onFeedback(item)
+                                            } label: {
+                                                if feedback == item {
+                                                    Label(item.label, systemImage: "checkmark")
+                                                } else {
+                                                    Text(item.label)
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            } label: {
+                                Image(systemName: "ellipsis.circle")
+                                    .frame(width: 28, height: 28)
                             }
                             .buttonStyle(.bordered)
                             .tint(.white.opacity(0.35))
                             .controlSize(.small)
-                        }
-                    }
-
-                    if let onFeedback {
-                        HStack(spacing: 6) {
-                            ForEach(AssistantAnswerFeedback.allCases, id: \.rawValue) { item in
-                                Button(item.label) {
-                                    onFeedback(item)
-                                }
-                                .buttonStyle(.bordered)
-                                .tint(feedback == item ? AppTheme.primary : .white.opacity(0.28))
-                                .controlSize(.small)
-                            }
                         }
                     }
                 }

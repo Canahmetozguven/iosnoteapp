@@ -199,10 +199,12 @@ struct SettingsView: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
 
-                    Toggle("Strict Grounding", isOn: Bindable(vm).strictGroundingMode)
-                    Text("When enabled, answers stick to retrieved notes/documents and clearly say when evidence is missing.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                    DisclosureGroup("Advanced") {
+                        Toggle("Strict Grounding", isOn: Bindable(vm).strictGroundingMode)
+                        Text("When enabled, answers stick to retrieved notes/documents and clearly say when evidence is missing.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
 
                     HStack {
                         Text("Fresh embeddings")

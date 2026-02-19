@@ -13,6 +13,7 @@ struct ChatView: View {
     @State private var strictForNextMessage = false
     @State private var whyMessageId: UUID?
     @State private var selectedSourcePreview: SourcePreview?
+    @State private var showingChatOptions = false
     @FocusState private var isInputFocused: Bool
 
     var body: some View {
@@ -84,6 +85,10 @@ struct ChatView: View {
             ChatSessionsSheet(vm: vm, modelContext: modelContext)
                 .presentationDetents([.medium, .large])
         }
+        .sheet(isPresented: $showingChatOptions) {
+            ChatOptionsSheet(vm: vm, strictForNextMessage: $strictForNextMessage)
+                .presentationDetents([.medium])
+        }
         .sheet(item: $selectedSourcePreview) { preview in
             SourcePreviewSheet(preview: preview)
         }
@@ -129,23 +134,21 @@ struct ChatView: View {
 
     private var noContextActions: some View {
         HStack(spacing: 8) {
-            Button("Upload file") {
+            Button("Add Source") {
                 selectedTabRaw = 2
             }
             .buttonStyle(.bordered)
             .controlSize(.small)
 
-            Button("Ask narrower") {
-                inputText = "Using my notes/documents only: "
-                isInputFocused = true
+            Menu("More") {
+                Button("Ask narrower") {
+                    inputText = "Using my notes/documents only: "
+                    isInputFocused = true
+                }
+                Button("Switch to Deep Search") {
+                    vm.ragRetrievalProfile = .deepSearch
+                }
             }
-            .buttonStyle(.bordered)
-            .controlSize(.small)
-
-            Button("Switch to Deep Search") {
-                vm.ragRetrievalProfile = .deepSearch
-            }
-            .buttonStyle(.bordered)
             .controlSize(.small)
         }
     }
@@ -221,59 +224,52 @@ struct ChatView: View {
     }
 
     private var composer: some View {
-        VStack(spacing: 8) {
-            HStack(alignment: .bottom, spacing: 10) {
-                TextField("Ask anything...", text: $inputText, axis: .vertical)
-                    .textFieldStyle(.plain)
-                    .lineLimit(1...4)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 10)
-                    .background(AppTheme.cardBorder.opacity(0.95))
-                    .foregroundStyle(.white)
-                    .clipShape(RoundedRectangle(cornerRadius: 14))
-                    .disabled(vm.isGenerating)
-                    .focused($isInputFocused)
+        HStack(alignment: .bottom, spacing: 10) {
+            TextField("Ask anything...", text: $inputText, axis: .vertical)
+                .textFieldStyle(.plain)
+                .lineLimit(1...4)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 10)
+                .background(AppTheme.cardBorder.opacity(0.95))
+                .foregroundStyle(.white)
+                .clipShape(RoundedRectangle(cornerRadius: 14))
+                .disabled(vm.isGenerating)
+                .focused($isInputFocused)
 
-                if vm.isGenerating {
-                    Button {
-                        vm.stopGeneration()
-                    } label: {
-                        Image(systemName: "stop.fill")
-                            .font(.system(size: 16, weight: .bold))
-                            .frame(width: 42, height: 42)
-                            .background(AppTheme.redError.opacity(0.15))
-                            .foregroundStyle(AppTheme.redError)
-                            .clipShape(Circle())
-                    }
-                } else {
-                    Button(action: sendMessage) {
-                        Image(systemName: "arrow.up")
-                            .font(.system(size: 16, weight: .bold))
-                            .frame(width: 42, height: 42)
-                            .background(AppTheme.primary)
-                            .foregroundStyle(.white)
-                            .clipShape(Circle())
-                    }
-                    .disabled(inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            if !vm.isGenerating {
+                Button {
+                    showingChatOptions = true
+                } label: {
+                    Image(systemName: "slider.horizontal.3")
+                        .font(.system(size: 16, weight: .bold))
+                        .frame(width: 42, height: 42)
+                        .background(AppTheme.cardBorder.opacity(0.95))
+                        .foregroundStyle(.white)
+                        .clipShape(Circle())
                 }
             }
 
-            HStack(spacing: 10) {
+            if vm.isGenerating {
                 Button {
-                    strictForNextMessage.toggle()
-                    vm.strictGroundingMode = strictForNextMessage
+                    vm.stopGeneration()
                 } label: {
-                    Label("Strict Grounding", systemImage: strictForNextMessage ? "shield.lefthalf.filled" : "shield")
+                    Image(systemName: "stop.fill")
+                        .font(.system(size: 16, weight: .bold))
+                        .frame(width: 42, height: 42)
+                        .background(AppTheme.redError.opacity(0.15))
+                        .foregroundStyle(AppTheme.redError)
+                        .clipShape(Circle())
                 }
-                .buttonStyle(.bordered)
-                .tint(strictForNextMessage ? AppTheme.primary : .secondary)
-                .controlSize(.small)
-
-                Spacer()
-
-                Text("Mode: \(vm.ragRetrievalProfile.displayName)")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
+            } else {
+                Button(action: sendMessage) {
+                    Image(systemName: "arrow.up")
+                        .font(.system(size: 16, weight: .bold))
+                        .frame(width: 42, height: 42)
+                        .background(AppTheme.primary)
+                        .foregroundStyle(.white)
+                        .clipShape(Circle())
+                }
+                .disabled(inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
         }
         .padding(.horizontal, 12)
@@ -397,6 +393,50 @@ struct ChatView: View {
             strictGrounding: vm.insight(for: message.id)?.strictGrounding ?? strictForNextMessage,
             modelContext: modelContext
         )
+    }
+}
+
+private struct ChatOptionsSheet: View {
+    let vm: GlobalViewModel
+    @Binding var strictForNextMessage: Bool
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("Answer Quality") {
+                    Picker("Mode", selection: Bindable(vm).ragRetrievalProfile) {
+                        ForEach(RAGRetrievalProfile.allCases) { profile in
+                            Text(profile.displayName).tag(profile)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    Text(vm.ragRetrievalProfile.description)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                Section("Grounding") {
+                    Toggle("Strict grounding for next answer", isOn: $strictForNextMessage)
+                    Text("When enabled, the assistant avoids unsupported claims and asks for more sources when needed.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .navigationTitle("Chat Options")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Done") {
+                        vm.strictGroundingMode = strictForNextMessage
+                        dismiss()
+                    }
+                }
+            }
+            .onDisappear {
+                vm.strictGroundingMode = strictForNextMessage
+            }
+        }
     }
 }
 
