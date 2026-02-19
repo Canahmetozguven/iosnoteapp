@@ -6,7 +6,6 @@ struct ChatView: View {
     @Environment(\.modelContext) private var modelContext
     @Query private var notes: [Note]
     @Query private var knowledgeChunks: [KnowledgeChunk]
-    @AppStorage(OnboardingState.selectedTabKey) private var selectedTabRaw = 1
 
     @State private var inputText = ""
     @State private var showingSessionSheet = false
@@ -18,42 +17,6 @@ struct ChatView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            if let ragStatusText = vm.ragStatusText() {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text(ragStatusText)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                    if let stage = vm.generationStage {
-                        Text(stage.displayText)
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                    }
-                    if let debugLine = vm.ragDebugText() {
-                        Text(debugLine)
-                            .font(.caption2)
-                            .foregroundStyle(.tertiary)
-                    }
-                    if isNoContextState {
-                        noContextActions
-                    }
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 10)
-                .background(
-                    RoundedRectangle(cornerRadius: 14, style: .continuous)
-                        .fill(Color(.secondarySystemBackground).opacity(0.92))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                                .stroke(Color.white.opacity(0.45), lineWidth: 0.6)
-                        )
-                )
-                .padding(.horizontal, 10)
-                .padding(.top, 8)
-                .padding(.bottom, 2)
-                .transition(.move(edge: .top).combined(with: .opacity))
-            }
-
             if let indexingText = indexingIndicatorText {
                 HStack(spacing: 8) {
                     ProgressView(value: indexingProgressValue)
@@ -103,7 +66,6 @@ struct ChatView: View {
         .navigationTitle(vm.activeSession()?.title ?? "Chat")
         .navigationBarTitleDisplayMode(.inline)
         .animation(.easeInOut(duration: 0.2), value: vm.generationStage?.rawValue ?? "")
-        .animation(.easeInOut(duration: 0.2), value: vm.ragStatusText() ?? "")
         .toolbar {
             ToolbarItem(placement: .topBarLeading) {
                 Button {
@@ -165,13 +127,6 @@ struct ChatView: View {
         )
     }
 
-    private var isNoContextState: Bool {
-        if case .usedContext(let count) = vm.ragStatus, count == 0 {
-            return true
-        }
-        return false
-    }
-
     private var indexingProgressValue: Double? {
         let value = max(0, min(1, vm.indexingProgress))
         return (value > 0 && value < 1) ? value : nil
@@ -191,28 +146,6 @@ struct ChatView: View {
             return "Indexing knowledge base (\(percentText))..."
         }
         return nil
-    }
-
-    private var noContextActions: some View {
-        HStack(spacing: 8) {
-            Button("Add Source") {
-                selectedTabRaw = 2
-            }
-            .buttonStyle(.borderedProminent)
-            .tint(AppTheme.primary)
-            .controlSize(.small)
-
-            Menu("More") {
-                Button("Ask narrower") {
-                    inputText = "Using my notes/documents only: "
-                    isInputFocused = true
-                }
-                Button("Switch to Deep Search") {
-                    vm.ragRetrievalProfile = .deepSearch
-                }
-            }
-            .controlSize(.small)
-        }
     }
 
     private var unloadedModelState: some View {
