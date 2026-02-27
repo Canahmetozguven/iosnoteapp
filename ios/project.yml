@@ -53,6 +53,8 @@ targets:
         buildPhase: resources
       - path: Resources/ModelCatalog.json
         buildPhase: resources
+      - path: Resources/PrivacyInfo.xcprivacy
+        buildPhase: resources
     dependencies:
       - framework: Frameworks/llama.xcframework
         embed: true

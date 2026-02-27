@@ -54,31 +54,51 @@ jobs:
         grep -q '^name: SynapsNotes-iOS' ios/project.yml
         grep -q 'PRODUCT_BUNDLE_IDENTIFIER: com.synapsnotes.ios' ios/project.yml
 
-    - name: Generate AppIcon assets
+    - name: Validate AppIcon asset catalog (no mutation)
       run: |
         set -euo pipefail
-        ICON_SRC="ios/Resources/AppIcon-1024.png"
-        if [ ! -f "$ICON_SRC" ]; then
-          echo "Missing $ICON_SRC"
-          exit 1
-        fi
         ICON_DIR="ios/Resources/Assets.xcassets/AppIcon.appiconset"
-        mkdir -p "$ICON_DIR"
-        sips -z 120 120 "$ICON_SRC" --out "$ICON_DIR/Icon-60@2x.png" >/dev/null
-        sips -z 180 180 "$ICON_SRC" --out "$ICON_DIR/Icon-60@3x.png" >/dev/null
-        sips -z 152 152 "$ICON_SRC" --out "$ICON_DIR/Icon-76@2x.png" >/dev/null
-        cp "$ICON_SRC" "$ICON_DIR/Icon-1024.png"
-        cat > "$ICON_DIR/Contents.json" <<'JSON'
-        {
-          "images": [
-            { "idiom": "iphone", "size": "60x60", "scale": "2x", "filename": "Icon-60@2x.png" },
-            { "idiom": "iphone", "size": "60x60", "scale": "3x", "filename": "Icon-60@3x.png" },
-            { "idiom": "ipad", "size": "76x76", "scale": "2x", "filename": "Icon-76@2x.png" },
-            { "idiom": "ios-marketing", "size": "1024x1024", "scale": "1x", "filename": "Icon-1024.png" }
-          ],
-          "info": { "author": "xcode", "version": 1 }
+        test -f "$ICON_DIR/Contents.json"
+        python3 - <<'PY'
+        import json
+        import sys
+        from pathlib import Path
+
+        icon_dir = Path("ios/Resources/Assets.xcassets/AppIcon.appiconset")
+        data = json.loads((icon_dir / "Contents.json").read_text(encoding="utf-8"))
+        images = data.get("images", [])
+        missing = []
+        referenced = set()
+        for img in images:
+            filename = img.get("filename")
+            if not filename:
+                continue
+            referenced.add(filename)
+            if not (icon_dir / filename).is_file():
+                missing.append(filename)
+
+        if missing:
+            print("Missing icon files referenced by AppIcon.appiconset/Contents.json:")
+            for name in sorted(set(missing)):
+                print(f"- {name}")
+            sys.exit(1)
+
+        required = {
+            "Icon-60@2x.png",
+            "Icon-60@3x.png",
+            "Icon-76@2x.png",
+            "Icon-ipad-76@1x.png",
+            "Icon-1024.png",
         }
-        JSON
+        not_referenced = sorted(required - referenced)
+        if not_referenced:
+            print("Required icon entries are missing from AppIcon.appiconset/Contents.json:")
+            for name in not_referenced:
+                print(f"- {name}")
+            sys.exit(1)
+        PY
+        # App Store validation requires opaque marketing icon.
+        sips -g hasAlpha "$ICON_DIR/Icon-1024.png" | grep -q "hasAlpha: no"
         
     - name: Build llama.cpp (AI Engine)
       run: |

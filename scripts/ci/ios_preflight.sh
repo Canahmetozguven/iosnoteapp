@@ -21,6 +21,7 @@ require_file() {
 require_file "fastlane/Fastfile"
 require_file "ios/project.yml"
 require_file "ios/Resources/Info.plist"
+require_file "ios/Resources/PrivacyInfo.xcprivacy"
 require_file "ios/Resources/LaunchScreen.storyboard"
 require_file "ios/Resources/ModelCatalog.json"
 require_file "ios/Resources/Assets.xcassets/AppIcon.appiconset/Contents.json"
@@ -38,6 +39,42 @@ p = Path("ios/Resources/ModelCatalog.json")
 data = json.loads(p.read_text(encoding="utf-8"))
 if not isinstance(data, dict) or "items" not in data or not isinstance(data["items"], list):
     raise SystemExit("ModelCatalog.json must be an object with an 'items' array")
+PY
+
+# Validate PrivacyInfo.xcprivacy includes required-reason APIs used by app code.
+python3 - <<'PY'
+import plistlib
+import sys
+from pathlib import Path
+
+p = Path("ios/Resources/PrivacyInfo.xcprivacy")
+with p.open("rb") as f:
+    pl = plistlib.load(f)
+
+api_types = pl.get("NSPrivacyAccessedAPITypes") or []
+reasons_by_category = {}
+for item in api_types:
+    category = item.get("NSPrivacyAccessedAPIType")
+    reasons = item.get("NSPrivacyAccessedAPITypeReasons") or []
+    if category:
+        reasons_by_category[category] = set(reasons)
+
+required = {
+    "NSPrivacyAccessedAPICategoryUserDefaults": {"CA92.1"},
+    "NSPrivacyAccessedAPICategoryFileTimestamp": {"C617.1"},
+}
+
+missing = []
+for category, reasons in required.items():
+    existing = reasons_by_category.get(category, set())
+    if not existing.intersection(reasons):
+        missing.append(f"{category} missing one of: {', '.join(sorted(reasons))}")
+
+if missing:
+    print("PrivacyInfo.xcprivacy is missing required API reason entries:")
+    for line in missing:
+        print(f"- {line}")
+    sys.exit(1)
 PY
 
 # Ensure Google Sign-In is configured (no placeholders)

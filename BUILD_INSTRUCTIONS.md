@@ -6,7 +6,8 @@
 - Bundle ID: `com.synapsnotes.ios`
 
 ## Prerequisites
-- Xcode 16+ (App Store Connect upload requires iOS 18+ SDK)
+- Xcode 16+ (currently sufficient for App Store Connect upload)
+- Starting April 28, 2026, App Store Connect uploads must use Xcode 26+ with the iOS 26 SDK.
 - Homebrew tools: `cmake`, `xcodegen`
 - Ruby/Bundler for Fastlane (CI uses `ruby/setup-ruby` with `bundler-cache: true`)
 

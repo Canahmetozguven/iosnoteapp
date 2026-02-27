@@ -67,7 +67,7 @@ jobs:
           echo "GITHUB_SHA=$GITHUB_SHA"
           git log -1 --oneline
 
-      - name: Select Xcode (iOS 18+ SDK required for upload)
+      - name: Select Xcode (iOS 18+ SDK today; iOS 26+ SDK required starting 2026-04-28)
         uses: maxim-lobanov/setup-xcode@v1
         with:
           xcode-version: latest-stable
@@ -109,11 +109,13 @@ jobs:
         run: |
           set -euo pipefail
           test -f ios/Resources/Info.plist
+          test -f ios/Resources/PrivacyInfo.xcprivacy
           test -f ios/Resources/LaunchScreen.storyboard
           test -f ios/Resources/Assets.xcassets/AppIcon.appiconset/Icon-60@2x.png
           test -f ios/Resources/Assets.xcassets/AppIcon.appiconset/Icon-76@2x.png
           test -f ios/Resources/Assets.xcassets/AppIcon.appiconset/Icon-1024.png
           test -f ios/Resources/Assets.xcassets/AppIcon.appiconset/Icon-ipad-76@1x.png
+          sips -g hasAlpha ios/Resources/Assets.xcassets/AppIcon.appiconset/Icon-1024.png | grep -q "hasAlpha: no"
           ls -la ios/Resources/Assets.xcassets/AppIcon.appiconset
           echo "Resources present."
 
