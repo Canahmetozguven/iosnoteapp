@@ -58,6 +58,11 @@
   <key>LSSupportsOpeningDocumentsInPlace</key>
   <true/>
 
+  <key>NSPhotoLibraryUsageDescription</key>
+  <string>Select photos and documents to import into your knowledge base for AI processing.</string>
+  <key>NSCameraUsageDescription</key>
+  <string>Capture images of documents to import into your knowledge base for AI processing.</string>
+
   <!-- Google Sign-In (replace with your real client id and reversed client id). -->
   <key>GIDClientID</key>
   <string>39556125198-onkotjq6no59v3pl0sj34h2rusecmt1u.apps.googleusercontent.com</string>
