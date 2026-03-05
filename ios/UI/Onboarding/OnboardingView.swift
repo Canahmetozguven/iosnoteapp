@@ -228,7 +228,8 @@ private struct ModelDownloadCard: View {
                                 ProgressView()
                             case .downloading(let progress, _, _):
                                 Text("\(Int(progress * 100))%")
-                                    .font(.caption.monospacedDigit())
+                                    .font(.caption)
+                                    .monospacedDigit()
                                     .foregroundStyle(.secondary)
                             case .completed:
                                 Image(systemName: "checkmark.circle.fill")
