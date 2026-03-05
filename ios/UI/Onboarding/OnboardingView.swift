@@ -78,7 +78,7 @@ struct OnboardingView: View {
                 .padding(.horizontal, 20)
                 .padding(.top, 12)
                 .opacity(isLastStep ? 0 : 1)
-                .disabled(!canMoveForward || isLastStep)
+                .disabled(!hasChatModel || isLastStep)
             }
 
             TabView(selection: $selectedIndex) {
@@ -99,6 +99,13 @@ struct OnboardingView: View {
             }
             .tabViewStyle(.page(indexDisplayMode: .always))
             .animation(.easeInOut(duration: 0.2), value: selectedIndex)
+            .onChange(of: selectedIndex) { _, newIndex in
+                let downloadIndex = steps.firstIndex(where: { $0.kind == .modelDownload }) ?? 1
+                if newIndex > downloadIndex && !hasChatModel {
+                    // Prevent swiping past the model download step if no model is installed
+                    selectedIndex = downloadIndex
+                }
+            }
 
             HStack(spacing: 12) {
                 if selectedIndex > 0 {
@@ -142,10 +149,13 @@ struct OnboardingView: View {
         selectedIndex == steps.count - 1
     }
 
+    private var hasChatModel: Bool {
+        vm.catalogStore.items(kind: .chat).contains { vm.isInstalled($0) }
+    }
+
     private var canMoveForward: Bool {
         let step = steps[selectedIndex]
         if step.kind == .modelDownload {
-            let hasChatModel = vm.catalogStore.items(kind: .chat).contains { vm.isInstalled($0) }
             return hasChatModel
         }
         return true
