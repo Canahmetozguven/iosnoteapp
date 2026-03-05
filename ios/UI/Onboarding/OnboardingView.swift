@@ -385,6 +385,7 @@ private struct OnboardingStep {
     enum Kind {
         case info
         case qualitySetup
+        case modelDownload
     }
 
     let kind: Kind
