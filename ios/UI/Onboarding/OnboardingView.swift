@@ -177,12 +177,23 @@ private struct ModelDownloadCard: View {
     @Environment(GlobalViewModel.self) private var vm
     let step: OnboardingStep
 
-    private var suggestedChatModel: ModelCatalogItem? {
-        vm.catalogStore.items.first(where: { $0.id == "qwen3-0.6b-q4-k-m" }) ?? vm.catalogStore.items.first(where: { $0.kind == .chat })
+    @State private var selectedChatModelId: String = "qwen3-0.6b-q4-k-m"
+    @State private var selectedEmbeddingModelId: String = "bge-small-en-v1.5-q8-0"
+
+    private var chatModels: [ModelCatalogItem] {
+        vm.catalogStore.items(kind: .chat)
     }
 
-    private var suggestedEmbeddingModel: ModelCatalogItem? {
-        vm.catalogStore.items.first(where: { $0.id == "bge-small-en-v1.5-q8-0" }) ?? vm.catalogStore.items.first(where: { $0.kind == .embedding })
+    private var embeddingModels: [ModelCatalogItem] {
+        vm.catalogStore.items(kind: .embedding)
+    }
+
+    private var selectedChatModel: ModelCatalogItem? {
+        chatModels.first(where: { $0.id == selectedChatModelId }) ?? chatModels.first
+    }
+
+    private var selectedEmbeddingModel: ModelCatalogItem? {
+        embeddingModels.first(where: { $0.id == selectedEmbeddingModelId }) ?? embeddingModels.first
     }
 
     var body: some View {
@@ -201,23 +212,45 @@ private struct ModelDownloadCard: View {
             Text(step.title)
                 .font(.system(.title2, design: .rounded).weight(.bold))
 
-            Text("Before chatting, you need to download a lightweight Chat model and an Embedding model for searching notes.")
+            Text("Select and download a lightweight Chat model and an Embedding model. Recommended ones are pre-selected.")
                 .font(.body)
                 .foregroundStyle(.secondary)
 
             VStack(alignment: .leading, spacing: 12) {
-                if let chatModel = suggestedChatModel {
-                    modelRow(item: chatModel, label: "Chat Model:")
+                if let chatModel = selectedChatModel {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Picker("Chat Model", selection: $selectedChatModelId) {
+                            ForEach(chatModels) { item in
+                                let name = item.id == "qwen3-0.6b-q4-k-m" ? "\(item.name) (Recommended)" : item.name
+                                Text(name).tag(item.id)
+                            }
+                        }
+                        .pickerStyle(.menu)
+                        .padding(.horizontal, -12)
+
+                        modelRow(item: chatModel, label: "Chat Model:")
+                    }
                 }
                 
-                if let embeddingModel = suggestedEmbeddingModel {
-                    modelRow(item: embeddingModel, label: "Embedding Model:")
+                if let embeddingModel = selectedEmbeddingModel {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Picker("Embedding Model", selection: $selectedEmbeddingModelId) {
+                            ForEach(embeddingModels) { item in
+                                let name = item.id == "bge-small-en-v1.5-q8-0" ? "\(item.name) (Recommended)" : item.name
+                                Text(name).tag(item.id)
+                            }
+                        }
+                        .pickerStyle(.menu)
+                        .padding(.horizontal, -12)
+                        
+                        modelRow(item: embeddingModel, label: "Embedding Model:")
+                    }
                 }
             }
             .padding(.top, 4)
             
-            let hasChat = vm.catalogStore.items(kind: .chat).contains(where: { vm.isInstalled($0) })
-            let hasEmbedding = vm.catalogStore.items(kind: .embedding).contains(where: { vm.isInstalled($0) })
+            let hasChat = chatModels.contains(where: { vm.isInstalled($0) })
+            let hasEmbedding = embeddingModels.contains(where: { vm.isInstalled($0) })
 
             if !(hasChat && hasEmbedding) {
                 Text("You must download both models to continue.")
@@ -228,11 +261,11 @@ private struct ModelDownloadCard: View {
                     .font(.caption)
                     .foregroundStyle(AppTheme.greenSuccess)
                     .onAppear {
-                        if vm.currentChatModelId == nil, let chatModel = suggestedChatModel {
-                            vm.loadChatModel(item: chatModel)
+                        if vm.currentChatModelId == nil, let downloadedChat = chatModels.first(where: { vm.isInstalled($0) }) {
+                            vm.loadChatModel(item: downloadedChat)
                         }
-                        if vm.currentEmbeddingModelId == nil, let embeddingModel = suggestedEmbeddingModel {
-                            vm.loadEmbeddingModel(item: embeddingModel)
+                        if vm.currentEmbeddingModelId == nil, let downloadedEmbedding = embeddingModels.first(where: { vm.isInstalled($0) }) {
+                            vm.loadEmbeddingModel(item: downloadedEmbedding)
                         }
                     }
             }
@@ -245,6 +278,18 @@ private struct ModelDownloadCard: View {
             RoundedRectangle(cornerRadius: 24, style: .continuous)
                 .fill(Color(.tertiarySystemBackground))
         )
+        .onAppear {
+            if !chatModels.contains(where: { $0.id == selectedChatModelId }) {
+                if let first = chatModels.first {
+                    selectedChatModelId = first.id
+                }
+            }
+            if !embeddingModels.contains(where: { $0.id == selectedEmbeddingModelId }) {
+                if let first = embeddingModels.first {
+                    selectedEmbeddingModelId = first.id
+                }
+            }
+        }
     }
 
     @ViewBuilder
