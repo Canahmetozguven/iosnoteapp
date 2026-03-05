@@ -155,10 +155,21 @@ struct ChatView: View {
                 .foregroundStyle(AppTheme.primary)
             Text("Chat model is not loaded")
                 .font(.headline)
-            Text("Open Settings, download a chat model, and load it.")
+            Text("Download a chat model in Settings, then load it to start chatting.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
+            
+            NavigationLink(destination: SettingsView()) {
+                Text("Open Settings")
+                    .font(.subheadline.weight(.semibold))
+                    .padding(.horizontal, 20)
+                    .padding(.vertical, 10)
+                    .background(AppTheme.primary)
+                    .foregroundStyle(.white)
+                    .clipShape(Capsule())
+            }
+            .padding(.top, 8)
         }
         .padding(24)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -167,36 +178,52 @@ struct ChatView: View {
     private var messagesArea: some View {
         ScrollViewReader { proxy in
             ScrollView {
-                LazyVStack(spacing: 14) {
-                    ForEach(vm.chatMessages, id: \.id) { msg in
-                        MessageBubble(
-                            message: msg,
-                            sourcePreviews: sourcePreviews(for: msg),
-                            inlineCitationIds: inlineCitationIds(for: msg),
-                            stageText: vm.generationStage?.displayText,
-                            feedback: vm.feedback(for: msg.id),
-                            onCitationTap: { citation in
-                                let normalized = citation
-                                    .replacingOccurrences(of: "[", with: "")
-                                    .replacingOccurrences(of: "]", with: "")
-                                if let preview = sourcePreviews(for: msg).first(where: {
-                                    $0.citationId == normalized || $0.citationId == citation
-                                }) {
-                                    selectedSourcePreview = preview
-                                }
-                            },
-                            onWhyTapped: msg.role == "assistant" ? { whyMessageId = msg.id } : nil,
-                            onRetryDeepSearch: msg.role == "assistant" ? { retryAssistantAnswer(msg, profile: .deepSearch) } : nil,
-                            onFeedback: msg.role == "assistant" ? { feedback in
-                                vm.recordFeedback(feedback, for: msg)
-                            } : nil
-                        )
-                        .id(msg.id)
+                if vm.chatMessages.isEmpty {
+                    VStack(spacing: 16) {
+                        Image(systemName: "bubble.left.and.bubble.right")
+                            .font(.system(size: 40))
+                            .foregroundStyle(AppTheme.primary.opacity(0.6))
+                        Text("No messages yet")
+                            .font(.headline)
+                        Text("Send a message below to start chatting with your knowledge base.")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.center)
                     }
+                    .padding(32)
+                    .frame(maxWidth: .infinity, minHeight: 300)
+                } else {
+                    LazyVStack(spacing: 14) {
+                        ForEach(vm.chatMessages, id: \.id) { msg in
+                            MessageBubble(
+                                message: msg,
+                                sourcePreviews: sourcePreviews(for: msg),
+                                inlineCitationIds: inlineCitationIds(for: msg),
+                                stageText: vm.generationStage?.displayText,
+                                feedback: vm.feedback(for: msg.id),
+                                onCitationTap: { citation in
+                                    let normalized = citation
+                                        .replacingOccurrences(of: "[", with: "")
+                                        .replacingOccurrences(of: "]", with: "")
+                                    if let preview = sourcePreviews(for: msg).first(where: {
+                                        $0.citationId == normalized || $0.citationId == citation
+                                    }) {
+                                        selectedSourcePreview = preview
+                                    }
+                                },
+                                onWhyTapped: msg.role == "assistant" ? { whyMessageId = msg.id } : nil,
+                                onRetryDeepSearch: msg.role == "assistant" ? { retryAssistantAnswer(msg, profile: .deepSearch) } : nil,
+                                onFeedback: msg.role == "assistant" ? { feedback in
+                                    vm.recordFeedback(feedback, for: msg)
+                                } : nil
+                            )
+                            .id(msg.id)
+                        }
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.top, 12)
+                    .padding(.bottom, 8)
                 }
-                .padding(.horizontal, 12)
-                .padding(.top, 12)
-                .padding(.bottom, 8)
             }
             .scrollDismissesKeyboard(.interactively)
             .contentShape(Rectangle())

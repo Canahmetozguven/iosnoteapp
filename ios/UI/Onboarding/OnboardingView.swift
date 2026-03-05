@@ -1,6 +1,7 @@
 import SwiftUI
 
 struct OnboardingView: View {
+    @Environment(GlobalViewModel.self) private var vm
     @Binding var hasCompletedOnboarding: Bool
     @State private var selectedIndex = 0
     @AppStorage(OnboardingState.ragRetrievalProfileKey) private var profileRaw = RAGRetrievalProfile.fastRecommended.rawValue
@@ -20,14 +21,10 @@ struct OnboardingView: View {
             tint: AppTheme.primary
         ),
         OnboardingStep(
-            kind: .info,
+            kind: .modelDownload,
             title: "Set Up AI Once",
-            detail: "Before chatting, open Settings and prepare local models.",
-            points: [
-                "Download and load one Chat model.",
-                "Download and load one Embedding model.",
-                "Low Power Mode is available for lighter devices."
-            ],
+            detail: "Before chatting, you need to download a lightweight Chat model. We recommend this small model to get started quickly.",
+            points: [],
             symbol: "gearshape.2.fill",
             tint: AppTheme.secondary
         ),
@@ -81,7 +78,7 @@ struct OnboardingView: View {
                 .padding(.horizontal, 20)
                 .padding(.top, 12)
                 .opacity(isLastStep ? 0 : 1)
-                .disabled(isLastStep)
+                .disabled(!canMoveForward || isLastStep)
             }
 
             TabView(selection: $selectedIndex) {
@@ -89,6 +86,8 @@ struct OnboardingView: View {
                     Group {
                         if step.kind == .qualitySetup {
                             QualitySetupCard(profileRaw: $profileRaw, strictGrounding: $strictGrounding)
+                        } else if step.kind == .modelDownload {
+                            ModelDownloadCard(step: step)
                         } else {
                             OnboardingStepCard(step: step)
                         }
@@ -123,6 +122,7 @@ struct OnboardingView: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(AppTheme.primary)
+                .disabled(!canMoveForward)
             }
             .padding(.horizontal, 20)
             .padding(.top, 12)
@@ -142,11 +142,136 @@ struct OnboardingView: View {
         selectedIndex == steps.count - 1
     }
 
+    private var canMoveForward: Bool {
+        let step = steps[selectedIndex]
+        if step.kind == .modelDownload {
+            let hasChatModel = vm.catalogStore.items(kind: .chat).contains { vm.isInstalled($0) }
+            return hasChatModel
+        }
+        return true
+    }
+
     private func completeOnboarding() {
         if RAGRetrievalProfile(rawValue: profileRaw) == nil {
             profileRaw = RAGRetrievalProfile.fastRecommended.rawValue
         }
         hasCompletedOnboarding = true
+    }
+}
+
+private struct ModelDownloadCard: View {
+    @Environment(GlobalViewModel.self) private var vm
+    let step: OnboardingStep
+
+    private var suggestedItem: ModelCatalogItem? {
+        vm.catalogStore.items.first(where: { $0.id == "qwen3-0.6b-q4-k-m" }) ?? vm.catalogStore.items.first(where: { $0.kind == .chat })
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 20) {
+            Spacer(minLength: 0)
+
+            ZStack {
+                Circle()
+                    .fill(step.tint.opacity(0.14))
+                    .frame(width: 84, height: 84)
+                Image(systemName: step.symbol)
+                    .font(.system(size: 34, weight: .semibold))
+                    .foregroundStyle(step.tint)
+            }
+
+            Text(step.title)
+                .font(.system(.title2, design: .rounded).weight(.bold))
+
+            Text(step.detail)
+                .font(.body)
+                .foregroundStyle(.secondary)
+
+            if let item = suggestedItem {
+                let isInstalled = vm.isInstalled(item)
+                let downloadState = vm.downloads.state(for: item.id)
+
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("Suggested Model:")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.secondary)
+
+                    HStack(spacing: 12) {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(item.name)
+                                .font(.headline)
+                            if let subtitle = item.subtitle {
+                                Text(subtitle)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+
+                        Spacer()
+
+                        if isInstalled {
+                            Image(systemName: "checkmark.circle.fill")
+                                .foregroundStyle(AppTheme.greenSuccess)
+                                .font(.title2)
+                        } else {
+                            switch downloadState {
+                            case .notStarted, .failed, .paused:
+                                Button {
+                                    vm.startDownload(item)
+                                } label: {
+                                    Image(systemName: "icloud.and.arrow.down")
+                                        .font(.title2)
+                                }
+                                .buttonStyle(.bordered)
+                                .tint(AppTheme.primary)
+                            case .queued:
+                                ProgressView()
+                            case .downloading(let progress, _, _):
+                                Text("\(Int(progress * 100))%")
+                                    .font(.caption.monospacedDigit())
+                                    .foregroundStyle(.secondary)
+                            case .completed:
+                                Image(systemName: "checkmark.circle.fill")
+                                    .foregroundStyle(AppTheme.greenSuccess)
+                                    .font(.title2)
+                            }
+                        }
+                    }
+                    .padding(16)
+                    .background(Color(.systemBackground))
+                    .clipShape(RoundedRectangle(cornerRadius: 14))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 14)
+                            .stroke(Color(.separator), lineWidth: 0.5)
+                    )
+                }
+                .padding(.top, 8)
+                
+                if !vm.catalogStore.items(kind: .chat).contains(where: { vm.isInstalled($0) }) {
+                    Text("You must download a model to continue.")
+                        .font(.caption)
+                        .foregroundStyle(AppTheme.redError)
+                } else {
+                    Text("Model ready! You can now move forward.")
+                        .font(.caption)
+                        .foregroundStyle(AppTheme.greenSuccess)
+                        .onAppear {
+                            // Automatically load the downloaded model when it completes during onboarding
+                            if vm.currentChatModelId == nil {
+                                vm.loadChatModel(item: item)
+                            }
+                        }
+                }
+            }
+
+            Spacer(minLength: 0)
+        }
+        .padding(24)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 24, style: .continuous)
+                .fill(Color(.tertiarySystemBackground))
+        )
     }
 }
 
