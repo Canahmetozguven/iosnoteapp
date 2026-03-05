@@ -78,7 +78,7 @@ struct OnboardingView: View {
                 .padding(.horizontal, 20)
                 .padding(.top, 12)
                 .opacity(isLastStep ? 0 : 1)
-                .disabled(!hasChatModel || isLastStep)
+                .disabled(!(hasChatModel && hasEmbeddingModel) || isLastStep)
             }
 
             TabView(selection: $selectedIndex) {
@@ -101,8 +101,8 @@ struct OnboardingView: View {
             .animation(.easeInOut(duration: 0.2), value: selectedIndex)
             .onChange(of: selectedIndex) { _, newIndex in
                 let downloadIndex = steps.firstIndex(where: { $0.kind == .modelDownload }) ?? 1
-                if newIndex > downloadIndex && !hasChatModel {
-                    // Prevent swiping past the model download step if no model is installed
+                if newIndex > downloadIndex && !(hasChatModel && hasEmbeddingModel) {
+                    // Prevent swiping past the model download step if either model is missing
                     selectedIndex = downloadIndex
                 }
             }
@@ -153,10 +153,14 @@ struct OnboardingView: View {
         vm.catalogStore.items(kind: .chat).contains { vm.isInstalled($0) }
     }
 
+    private var hasEmbeddingModel: Bool {
+        vm.catalogStore.items(kind: .embedding).contains { vm.isInstalled($0) }
+    }
+
     private var canMoveForward: Bool {
         let step = steps[selectedIndex]
         if step.kind == .modelDownload {
-            return hasChatModel
+            return hasChatModel && hasEmbeddingModel
         }
         return true
     }
@@ -173,12 +177,16 @@ private struct ModelDownloadCard: View {
     @Environment(GlobalViewModel.self) private var vm
     let step: OnboardingStep
 
-    private var suggestedItem: ModelCatalogItem? {
+    private var suggestedChatModel: ModelCatalogItem? {
         vm.catalogStore.items.first(where: { $0.id == "qwen3-0.6b-q4-k-m" }) ?? vm.catalogStore.items.first(where: { $0.kind == .chat })
     }
 
+    private var suggestedEmbeddingModel: ModelCatalogItem? {
+        vm.catalogStore.items.first(where: { $0.id == "bge-small-en-v1.5-q8-0" }) ?? vm.catalogStore.items.first(where: { $0.kind == .embedding })
+    }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 20) {
+        VStack(alignment: .leading, spacing: 16) {
             Spacer(minLength: 0)
 
             ZStack {
@@ -193,86 +201,40 @@ private struct ModelDownloadCard: View {
             Text(step.title)
                 .font(.system(.title2, design: .rounded).weight(.bold))
 
-            Text(step.detail)
+            Text("Before chatting, you need to download a lightweight Chat model and an Embedding model for searching notes.")
                 .font(.body)
                 .foregroundStyle(.secondary)
 
-            if let item = suggestedItem {
-                let isInstalled = vm.isInstalled(item)
-                let downloadState = vm.downloads.state(for: item.id)
+            VStack(alignment: .leading, spacing: 12) {
+                if let chatModel = suggestedChatModel {
+                    modelRow(item: chatModel, label: "Chat Model:")
+                }
+                
+                if let embeddingModel = suggestedEmbeddingModel {
+                    modelRow(item: embeddingModel, label: "Embedding Model:")
+                }
+            }
+            .padding(.top, 4)
+            
+            let hasChat = vm.catalogStore.items(kind: .chat).contains(where: { vm.isInstalled($0) })
+            let hasEmbedding = vm.catalogStore.items(kind: .embedding).contains(where: { vm.isInstalled($0) })
 
-                VStack(alignment: .leading, spacing: 12) {
-                    Text("Suggested Model:")
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(.secondary)
-
-                    HStack(spacing: 12) {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(item.name)
-                                .font(.headline)
-                            if let subtitle = item.subtitle {
-                                Text(subtitle)
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
+            if !(hasChat && hasEmbedding) {
+                Text("You must download both models to continue.")
+                    .font(.caption)
+                    .foregroundStyle(AppTheme.redError)
+            } else {
+                Text("Models ready! You can now move forward.")
+                    .font(.caption)
+                    .foregroundStyle(AppTheme.greenSuccess)
+                    .onAppear {
+                        if vm.currentChatModelId == nil, let chatModel = suggestedChatModel {
+                            vm.loadChatModel(item: chatModel)
                         }
-
-                        Spacer()
-
-                        if isInstalled {
-                            Image(systemName: "checkmark.circle.fill")
-                                .foregroundStyle(AppTheme.greenSuccess)
-                                .font(.title2)
-                        } else {
-                            switch downloadState {
-                            case .notStarted, .failed, .paused:
-                                Button {
-                                    vm.startDownload(item)
-                                } label: {
-                                    Image(systemName: "icloud.and.arrow.down")
-                                        .font(.title2)
-                                }
-                                .buttonStyle(.bordered)
-                                .tint(AppTheme.primary)
-                            case .queued:
-                                ProgressView()
-                            case .downloading(let progress, _, _):
-                                Text("\(Int(progress * 100))%")
-                                    .font(.caption)
-                                    .monospacedDigit()
-                                    .foregroundStyle(.secondary)
-                            case .completed:
-                                Image(systemName: "checkmark.circle.fill")
-                                    .foregroundStyle(AppTheme.greenSuccess)
-                                    .font(.title2)
-                            }
+                        if vm.currentEmbeddingModelId == nil, let embeddingModel = suggestedEmbeddingModel {
+                            vm.loadEmbeddingModel(item: embeddingModel)
                         }
                     }
-                    .padding(16)
-                    .background(Color(.systemBackground))
-                    .clipShape(RoundedRectangle(cornerRadius: 14))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 14)
-                            .stroke(Color(.separator), lineWidth: 0.5)
-                    )
-                }
-                .padding(.top, 8)
-                
-                if !vm.catalogStore.items(kind: .chat).contains(where: { vm.isInstalled($0) }) {
-                    Text("You must download a model to continue.")
-                        .font(.caption)
-                        .foregroundStyle(AppTheme.redError)
-                } else {
-                    Text("Model ready! You can now move forward.")
-                        .font(.caption)
-                        .foregroundStyle(AppTheme.greenSuccess)
-                        .onAppear {
-                            // Automatically load the downloaded model when it completes during onboarding
-                            if vm.currentChatModelId == nil {
-                                vm.loadChatModel(item: item)
-                            }
-                        }
-                }
             }
 
             Spacer(minLength: 0)
@@ -283,6 +245,69 @@ private struct ModelDownloadCard: View {
             RoundedRectangle(cornerRadius: 24, style: .continuous)
                 .fill(Color(.tertiarySystemBackground))
         )
+    }
+
+    @ViewBuilder
+    private func modelRow(item: ModelCatalogItem, label: String) -> some View {
+        let isInstalled = vm.isInstalled(item)
+        let downloadState = vm.downloads.state(for: item.id)
+
+        VStack(alignment: .leading, spacing: 6) {
+            Text(label)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+
+            HStack(spacing: 12) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(item.name)
+                        .font(.subheadline.weight(.semibold))
+                    if let subtitle = item.subtitle {
+                        Text(subtitle)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                }
+
+                Spacer()
+
+                if isInstalled {
+                    Image(systemName: "checkmark.circle.fill")
+                        .foregroundStyle(AppTheme.greenSuccess)
+                        .font(.title2)
+                } else {
+                    switch downloadState {
+                    case .notStarted, .failed, .paused:
+                        Button {
+                            vm.startDownload(item)
+                        } label: {
+                            Image(systemName: "icloud.and.arrow.down")
+                                .font(.title2)
+                        }
+                        .buttonStyle(.bordered)
+                        .tint(AppTheme.primary)
+                    case .queued:
+                        ProgressView()
+                    case .downloading(let progress, _, _):
+                        Text("\(Int(progress * 100))%")
+                            .font(.caption)
+                            .monospacedDigit()
+                            .foregroundStyle(.secondary)
+                    case .completed:
+                        Image(systemName: "checkmark.circle.fill")
+                            .foregroundStyle(AppTheme.greenSuccess)
+                            .font(.title2)
+                    }
+                }
+            }
+            .padding(12)
+            .background(Color(.systemBackground))
+            .clipShape(RoundedRectangle(cornerRadius: 12))
+            .overlay(
+                RoundedRectangle(cornerRadius: 12)
+                    .stroke(Color(.separator), lineWidth: 0.5)
+            )
+        }
     }
 }
 
