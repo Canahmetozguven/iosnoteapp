@@ -2,7 +2,7 @@
   "expo": {
     "name": "Synaps Notes",
     "slug": "synaps-notes-ios",
-    "version": "1.0.0",
+    "version": "1.0.1",
     "ios": {
       "bundleIdentifier": "com.synapsnotes.ios",
       "infoPlist": {
@@ -16,3 +16,4 @@
     }
   }
 }
+

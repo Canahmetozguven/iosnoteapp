@@ -1,6 +1,6 @@
 {
   "name": "llmnotes-ios",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "dependencies": {
     "@plannotator/opencode": "^0.6.7"
   },
@@ -9,3 +9,4 @@
     "eas-build-pre-install": "bash ios/eas-prebuild.sh"
   }
 }
+
